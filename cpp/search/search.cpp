@@ -54,11 +54,12 @@ static double getScoreStdev(double scoreMean, double scoreMeanSq) {
 //-----------------------------------------------------------------------------------------
 
 SearchNode::SearchNode(Search& search, SearchThread& thread, Loc moveLoc)
-  :lockIdx(),statsLock(ATOMIC_FLAG_INIT),nextPla(thread.pla),prevMoveLoc(moveLoc),
+  :lockIdx(),nextPla(thread.pla),prevMoveLoc(moveLoc),
    nnOutput(),
    children(NULL),numChildren(0),childrenCapacity(0),
    stats(),virtualLosses(0)
 {
+  statsLock.clear();
   lockIdx = thread.rand.nextUInt(search.mutexPool->getNumMutexes());
 }
 SearchNode::~SearchNode() {
@@ -529,7 +530,7 @@ double Search::getRootUtility() const {
 uint32_t Search::chooseIndexWithTemperature(Rand& rand, const double* relativeProbs, int numRelativeProbs, double temperature) {
   assert(numRelativeProbs > 0);
   assert(numRelativeProbs < 1024); //We're just doing this on the stack
-  double processedRelProbs[numRelativeProbs];
+  auto processedRelProbs = new double[numRelativeProbs];
 
   double maxValue = 0.0;
   for(int i = 0; i<numRelativeProbs; i++) {
@@ -548,6 +549,7 @@ uint32_t Search::chooseIndexWithTemperature(Rand& rand, const double* relativePr
         bestIdx = i;
       }
     }
+    delete[]processedRelProbs;
     return bestIdx;
   }
   //Actual temperature
@@ -561,6 +563,7 @@ uint32_t Search::chooseIndexWithTemperature(Rand& rand, const double* relativePr
     }
     assert(sum > 0.0);
     uint32_t idxChosen = rand.nextUInt(processedRelProbs,numRelativeProbs);
+    delete[]processedRelProbs;
     return idxChosen;
   }
 }
@@ -878,7 +881,7 @@ void Search::maybeAddPolicyNoise(SearchThread& thread, SearchNode& node, bool is
     //Generate gamma draw on each move
     double alpha = searchParams.rootDirichletNoiseTotalConcentration / legalCount;
     double rSum = 0.0;
-    double r[policySize];
+    auto r = new double[policySize];
     for(int i = 0; i<policySize; i++) {
       if(node.nnOutput->policyProbs[i] >= 0) {
         r[i] = thread.rand.nextGamma(alpha);
@@ -899,8 +902,8 @@ void Search::maybeAddPolicyNoise(SearchThread& thread, SearchNode& node, bool is
         node.nnOutput->policyProbs[i] = r[i] * weight + node.nnOutput->policyProbs[i] * (1.0-weight);
       }
     }
+    delete[]r;
   }
-
 }
 
 bool Search::isAllowedRootMove(Loc moveLoc) const {
@@ -952,7 +955,7 @@ void Search::getValueChildWeights(
     return;
   }
 
-  double stdevs[numChildren];
+  auto stdevs = new double[numChildren];
   for(int i = 0; i<numChildren; i++) {
     int64_t numVisits = childVisitsBuf[i];
     assert(numVisits > 0);
@@ -972,7 +975,7 @@ void Search::getValueChildWeights(
 
   double simpleValue = simpleValueSum / numChildVisits;
 
-  double weight[numChildren];
+  auto weight = new double[numChildren];
   for(int i = 0; i<numChildren; i++) {
     double z = (childSelfValuesBuf[i] - simpleValue) / stdevs[i];
     //Also just for numeric sanity, make sure everything has some tiny minimum value.
@@ -991,7 +994,8 @@ void Search::getValueChildWeights(
   for(int i = 0; i<numChildren; i++) {
     resultBuf[i] /= totalWeight;
   }
-
+  delete[]stdevs;
+  delete[]weight;
 }
 
 double Search::getPlaySelectionValue(

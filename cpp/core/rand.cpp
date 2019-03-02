@@ -210,12 +210,12 @@ void Rand::init()
     s += "|";
     DWORD processId = GetCurrentProcessId();
     s += Global::int64ToString((int64_t)processId);
-    s += "|";
+    /*s += "|";
     int bufSize = 1024;
-    char hostNameBuf[bufSize];
-    int result = gethostname(hostNameBuf,bufSize);
+    std::vector<char> hostNameBuf(bufSize);
+    int result = gethostname(hostNameBuf.data(),bufSize);
     if(result == 0)
-      s += string(hostNameBuf);
+      s += string(hostNameBuf.data());*/
   }
 #endif
 #ifdef _RAND_IS_UNIX
@@ -287,8 +287,8 @@ public:
   ~RandToURNGWrapper()
   {}
 
-  static size_t min() { return 0; }
-  static size_t max() { return (size_t)0xFFFFFFFF; }
+  static size_t (min)() { return 0; }
+  static size_t (max)() { return (size_t)0xFFFFFFFF; }
   size_t operator()() {
     return (size_t)rand->nextUInt();
   }

@@ -20,8 +20,8 @@ using namespace std;
 #include "../core/config.h"
 
 //GLOBAL DEFINES AND FLAGS----------------------------------------------------
-#define NORETURN __attribute__ ((noreturn))
-#define PUREFUNC __attribute__ ((pure))
+//#define NORETURN __attribute__ ((noreturn))
+//#define PUREFUNC __attribute__ ((pure))
 
 //GLOBAL FUNCTIONS------------------------------------------------------------
 namespace Global
@@ -29,8 +29,8 @@ namespace Global
   //ERRORS----------------------------------
 
   //Report fatal error message and exit
-  void fatalError(const char* s) NORETURN;
-  void fatalError(const string& s) NORETURN;
+  void fatalError(const char* s) ;// NORETURN;
+  void fatalError(const string& s);// NORETURN;
 
   //TIME------------------------------------
 

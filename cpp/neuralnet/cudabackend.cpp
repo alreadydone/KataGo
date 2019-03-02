@@ -22,6 +22,8 @@
 #include "../neuralnet/nninterface.h"
 #include "../neuralnet/nninputs.h"
 
+#include <algorithm>
+
 void NeuralNet::globalInitialize(
   const string& tensorflowGpuVisibleDeviceList,
   double tensorflowPerProcessGpuMemoryFraction

@@ -201,6 +201,10 @@ static uint8_t* SHA512_Data(const uint8_t*, size_t, uint8_t[SHA512_DIGEST_LENGTH
  * made).
  */
 
+#define LITTLE_ENDIAN 1234
+#define BIG_ENDIAN    4321
+#define BYTE_ORDER LITTLE_ENDIAN
+
 #if !defined(BYTE_ORDER) || (BYTE_ORDER != LITTLE_ENDIAN && BYTE_ORDER != BIG_ENDIAN)
 #error Define BYTE_ORDER to be equal to either LITTLE_ENDIAN or BIG_ENDIAN
 #endif

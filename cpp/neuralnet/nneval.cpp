@@ -1,4 +1,5 @@
 
+#include <algorithm>
 #include "../neuralnet/nneval.h"
 
 //-------------------------------------------------------------------------------------
@@ -528,7 +529,7 @@ void NNEvaluator::evaluate(
     int ySize = board.y_size;
 
     float maxPolicy = -1e25f;
-    bool isLegal[policySize];
+    auto isLegal = new bool[policySize];
     int legalCount = 0;
     for(int i = 0; i<policySize; i++) {
       Loc loc = NNPos::posToLoc(i,xSize,ySize,posLen);
@@ -577,6 +578,8 @@ void NNEvaluator::evaluate(
       for(int i = 0; i<policySize; i++)
         policy[i] = isLegal[i] ? (policy[i] / policySum) : -1.0f;
     }
+
+    delete[]isLegal;
 
     //Fill everything out-of-bounds too, for robustness.
     for(int i = policySize; i<NNPos::MAX_NN_POLICY_SIZE; i++)

@@ -1,4 +1,5 @@
 #include "../search/timecontrols.h"
+#include <algorithm>
 
 TimeControls::TimeControls()
   :originalMainTime(1.0e30),

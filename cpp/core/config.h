@@ -2,6 +2,8 @@
  * Global defines and settings
  */
 
+#define NOMINMAX
+
 #ifndef CONFIG_H_
 #define CONFIG_H_
 

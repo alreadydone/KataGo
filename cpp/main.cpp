@@ -62,7 +62,7 @@ int main(int argc, const char* argv[]) {
   else if(cmdArg == "sandbox")
     return MainCmds::sandbox();
   else if(cmdArg == "version") {
-    cout << "Git revision: " << GIT_REVISION << endl;
+    //cout << "Git revision: " << GIT_REVISION << endl;
     cout << "Compile Time: " << __DATE__ << " " << __TIME__ << endl;
     return 0;
   }

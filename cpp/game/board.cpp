@@ -230,7 +230,7 @@ int Board::getNumLibertiesAfterPlay(Loc loc, Player pla, int max) const
   Player opp = getOpp(pla);
 
   int numLibs = 0;
-  Loc libs[max];
+  auto libs = new Loc[max];
   int numCapturedGroups = 0;
   Loc capturedGroupHeads[4];
 
@@ -308,6 +308,7 @@ int Board::getNumLibertiesAfterPlay(Loc loc, Player pla, int max) const
       }
     }
   }
+  delete[]libs;
   return numLibs;
 }
 
@@ -944,7 +945,7 @@ void Board::removeSingleStone(Loc loc)
 
   //Save the entire chain's stone locations
   int num_locs = chain_data[chain_head[loc]].num_locs;
-  int locs[num_locs];
+  auto locs = new int[num_locs];
   int idx = 0;
   Loc cur = loc;
   do
@@ -962,6 +963,7 @@ void Board::removeSingleStone(Loc loc)
     if(locs[i] != loc)
       playMoveAssumeLegal(locs[i],pla);
   }
+  delete[]locs;
 }
 
 //Add a chain of the given player to the given region of empty space, floodfilling it.
@@ -1213,7 +1215,7 @@ int Board::findLibertyGainingCaptures(Loc loc, vector<Loc>& buf, int bufStart, i
 
   //For performance, avoid checking for captures on any chain twice
   int arrSize = x_size*y_size;
-  Loc chainHeadsChecked[arrSize];
+  auto chainHeadsChecked = new Loc[arrSize];
   int numChainHeadsChecked = 0;
 
   int numFound = 0;
@@ -1244,6 +1246,7 @@ int Board::findLibertyGainingCaptures(Loc loc, vector<Loc>& buf, int bufStart, i
     cur = next_in_chain[cur];
   } while (cur != loc);
 
+  delete[]chainHeadsChecked;
   return numFound;
 }
 
@@ -1333,10 +1336,10 @@ bool Board::searchIsLadderCaptured(Loc loc, bool defenderFirst, vector<Loc>& buf
 
   //Stack for the search. These point to lists of possible moves to search at each level of the stack, indices refer to indices in [buf].
   int arrSize = x_size*y_size*3/2+1; //A bit bigger due to paranoia about recaptures making the sequence longer.
-  int moveListStarts[arrSize]; //Buf idx of start of list
-  int moveListLens[arrSize]; //Len of list
-  int moveListCur[arrSize]; //Current move list idx searched, equal to -1 if list has not been generated.
-  MoveRecord records[arrSize]; //Records so that we can undo moves as we search back up.
+  auto moveListStarts = new int[arrSize]; //Buf idx of start of list
+  auto moveListLens = new int[arrSize]; //Len of list
+  auto moveListCur = new int [arrSize]; //Current move list idx searched, equal to -1 if list has not been generated.
+  auto records = new MoveRecord[arrSize]; //Records so that we can undo moves as we search back up.
   int stackIdx = 0;
   int searchNodeCount = 0;
   static const int MAX_LADDER_SEARCH_NODE_BUDGET = 25000;
@@ -1355,6 +1358,10 @@ bool Board::searchIsLadderCaptured(Loc loc, bool defenderFirst, vector<Loc>& buf
     if(stackIdx <= -1) {
       assert(stackIdx == -1);
       ko_loc = ko_loc_saved;
+      delete[]moveListStarts;
+      delete[]moveListLens;
+      delete[]moveListCur;
+      delete[]records;
       return returnValue;
     }
 
@@ -1369,6 +1376,10 @@ bool Board::searchIsLadderCaptured(Loc loc, bool defenderFirst, vector<Loc>& buf
         undo(records[stackIdx]);
         stackIdx -= 1;
       }
+      delete[]moveListStarts;
+      delete[]moveListLens;
+      delete[]moveListCur;
+      delete[]records;
       return false;
     }
 
@@ -1582,18 +1593,18 @@ void Board::calculateAreaForPla(Player pla, bool safeBigTerritories, bool unsafe
   //independent regions, each one vital for at most 4 pla groups, add some extra just in case.
   int maxRegions = (MAX_LEN * MAX_LEN + 1)/2 + 1;
   int vitalForPlaHeadsListsMaxLen = maxRegions * 4;
-  Loc vitalForPlaHeadsLists[vitalForPlaHeadsListsMaxLen];
+  auto vitalForPlaHeadsLists = new Loc[vitalForPlaHeadsListsMaxLen];
   int vitalForPlaHeadsListsTotal = 0;
 
   //A list of region heads
   int numRegions = 0;
-  Loc regionHeads[maxRegions];
+  auto regionHeads = new Loc[maxRegions];
   //Start indices and list lengths in vitalForPlaHeadsLists
-  uint16_t vitalStart[maxRegions];
-  uint16_t vitalLen[maxRegions];
+  auto vitalStart = new uint16_t[maxRegions];
+  auto vitalLen = new uint16_t[maxRegions];
   //For each region, are there 0, 1, or 2+ spaces of that region not bordering any pla?
-  uint8_t numInternalSpacesMax2[maxRegions];
-  bool containsOpp[maxRegions];
+  auto numInternalSpacesMax2 = new uint8_t[maxRegions];
+  auto containsOpp = new bool[maxRegions];
 
   for(int i = 0; i<MAX_ARR_SIZE; i++) {
     regionHeadByLoc[i] = NULL_LOC;
@@ -1756,7 +1767,7 @@ void Board::calculateAreaForPla(Player pla, bool safeBigTerritories, bool unsafe
     }
     numPlaHeads = newNumPlaHeads;
   }
-  bool plaHasBeenKilled[numPlaHeads];
+  auto plaHasBeenKilled = new bool[numPlaHeads];
   for(int i = 0; i<numPlaHeads; i++)
     plaHasBeenKilled[i] = false;
 
@@ -1853,6 +1864,12 @@ void Board::calculateAreaForPla(Player pla, bool safeBigTerritories, bool unsafe
     }
   }
 
+  delete[]regionHeads;
+  delete[]vitalStart;
+  delete[]vitalLen;
+  delete[]numInternalSpacesMax2;
+  delete[]containsOpp;
+  delete[]plaHasBeenKilled;
 }
 
 

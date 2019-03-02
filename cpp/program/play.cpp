@@ -2,6 +2,7 @@
 #include "../search/asyncbot.h"
 #include "../program/play.h"
 #include "../program/setup.h"
+#include <algorithm>
 
 static double nextGaussianTruncated(Rand& rand, double bound) {
   double d = rand.nextGaussian();
@@ -1303,8 +1304,8 @@ void Play::maybeForkGame(
 
   //Generate a selection of a small random number of choices
   int numChoices = gameRand.nextInt(fancyModes.earlyForkGameMinChoices,fancyModes.earlyForkGameMaxChoices);
-  Loc possibleMoves[numChoices];
-  int numPossible = chooseRandomLegalMoves(board,hist,pla,gameRand,possibleMoves,numChoices);
+  std::vector<Loc> possibleMoves(numChoices);
+  int numPossible = chooseRandomLegalMoves(board,hist,pla,gameRand,possibleMoves.data(),numChoices);
   if(numPossible <= 0)
     return;
 

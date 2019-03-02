@@ -1615,7 +1615,7 @@ isResignation: 0
       Rand rand(baseRand.nextUInt64());
       for(int i = 0; i<1000; i++) {
         int numLegal = 0;
-        Loc legalMoves[board.x_size*board.y_size + 1];
+        auto legalMoves = new Loc[board.x_size*board.y_size + 1];
         Loc move;
 
         for(int y = 0; y<board.y_size; y++) {
@@ -1659,6 +1659,8 @@ isResignation: 0
           move = legalMoves[rand.nextUInt(numLegal)];
         makeMoveAssertLegal(hist, board, move, nextPla, __LINE__);
         nextPla = getOpp(nextPla);
+
+        delete[]legalMoves;
       }
       printGameResult(out,hist);
     };

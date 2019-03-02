@@ -1149,7 +1149,7 @@ void Tests::runBoardUndoTest() {
   auto run = [&](const Board& startBoard, bool multiStoneSuicideLegal) {
     int steps = 1000;
     Board* boards = new Board[steps+1];
-    Board::MoveRecord records[steps];
+    auto records = new Board::MoveRecord[steps];
 
     boards[0] = startBoard;
     for(int n = 1; n <= steps; n++) {
@@ -1183,6 +1183,7 @@ void Tests::runBoardUndoTest() {
       board.checkConsistency();
     }
     delete[] boards;
+    delete[]records;
   };
 
   run(Board(19,19),true);
@@ -1212,8 +1213,8 @@ void Tests::runBoardStressTest() {
   cout << "Running board stress test" << endl;
   Rand rand("runBoardStressTests");
 
-  int numBoards = 4;
-  Board boards[numBoards];
+  constexpr int numBoards = 4;
+  Board boards[4];
   boards[0] = Board();
   boards[1] = Board(9,16);
   boards[2] = Board(13,7);

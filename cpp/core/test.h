@@ -3,6 +3,7 @@
 
 #include "../core/global.h"
 #include <sstream>
+#include <algorithm>
 
 //A version of assert that's always defined, regardless of NDEBUG
 #define testAssert(EX) (void)((EX) || (TestCommon::testAssertFailed(#EX, __FILE__, __LINE__),0))
@@ -20,7 +21,7 @@ namespace TestCommon {
 
     bool matches = true;
     int firstLineDiff = 0;
-    for(int i = 0; i<std::max(alines.size(),elines.size()); i++) {
+    for (int i = 0; i < (std::max)(alines.size(), elines.size()); i++) {
       if(i >= alines.size() || i >= elines.size()) {
         firstLineDiff = i;
         matches = false;

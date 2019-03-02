@@ -197,7 +197,7 @@ int MainCmds::selfplay(int argc, const char* const* argv) {
   logger.setLogToStdout(logToStdout);
 
   logger.write("Self Play Engine starting...");
-  logger.write(string("Git revision: ") + GIT_REVISION);
+  //logger.write(string("Git revision: ") + GIT_REVISION);
 
   //Load runner settings
   const int numGameThreads = cfg.getInt("numGameThreads",1,16384);
