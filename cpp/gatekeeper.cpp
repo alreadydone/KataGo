@@ -9,7 +9,6 @@
 #include "search/asyncbot.h"
 #include "program/setup.h"
 #include "program/play.h"
-#include "program/gitinfo.h"
 #include "main.h"
 
 #include <sstream>
@@ -223,7 +222,7 @@ int MainCmds::gatekeeper(int argc, const char* const* argv) {
   string rejectedModelsDir;
   string sgfOutputDir;
   try {
-    TCLAP::CmdLine cmd("Test neural nets to see if they should be accepted", ' ', "1.0",true);
+    TCLAP::CmdLine cmd("Test neural nets to see if they should be accepted", ' ', Version::getKataGoVersionForHelp(),true);
     TCLAP::ValueArg<string> configFileArg("","config-file","Config file to use",true,string(),"FILE");
     TCLAP::ValueArg<string> testModelsDirArg("","test-models-dir","Dir to poll and load models from",true,string(),"DIR");
     TCLAP::ValueArg<string> sgfOutputDirArg("","sgf-output-dir","Dir to output sgf files",true,string(),"DIR");
@@ -268,7 +267,7 @@ int MainCmds::gatekeeper(int argc, const char* const* argv) {
   logger.setLogToStdout(logToStdout);
 
   logger.write("Gatekeeper Engine starting...");
-//  logger.write(string("Git revision: ") + GIT_REVISION);
+  logger.write(string("Git revision: ") + Version::getGitRevision());
 
   //Load runner settings
   const int numGameThreads = cfg.getInt("numGameThreads",1,16384);
@@ -357,7 +356,9 @@ int MainCmds::gatekeeper(int argc, const char* const* argv) {
     NNEvaluator* testNNEval;
     {
       vector<NNEvaluator*> nnEvals =
-        Setup::initializeNNEvaluators({testModelName},{testModelFile},cfg,logger,rand,maxConcurrentEvals,debugSkipNeuralNetDefaultTest,false,NNPos::MAX_BOARD_LEN);
+        Setup::initializeNNEvaluators(
+          {testModelName},{testModelFile},cfg,logger,rand,maxConcurrentEvals,debugSkipNeuralNetDefaultTest,false,NNPos::MAX_BOARD_LEN,NNPos::MAX_BOARD_LEN,-1
+        );
       assert(nnEvals.size() == 1);
       logger.write("Loaded candidate neural net " + testModelName + " from: " + testModelFile);
       testNNEval = nnEvals[0];
@@ -368,7 +369,9 @@ int MainCmds::gatekeeper(int argc, const char* const* argv) {
     NNEvaluator* acceptedNNEval;
     {
       vector<NNEvaluator*> nnEvals =
-        Setup::initializeNNEvaluators({acceptedModelName},{acceptedModelFile},cfg,logger,rand,maxConcurrentEvals,debugSkipNeuralNetDefaultAccepted,false,NNPos::MAX_BOARD_LEN);
+        Setup::initializeNNEvaluators(
+          {acceptedModelName},{acceptedModelFile},cfg,logger,rand,maxConcurrentEvals,debugSkipNeuralNetDefaultAccepted,false,NNPos::MAX_BOARD_LEN,NNPos::MAX_BOARD_LEN,-1
+        );
       assert(nnEvals.size() == 1);
       logger.write("Loaded accepted neural net " + acceptedModelName + " from: " + acceptedModelFile);
       acceptedNNEval = nnEvals[0];
@@ -408,7 +411,7 @@ int MainCmds::gatekeeper(int argc, const char* const* argv) {
 
       lock.unlock();
 
-      int dataPosLen = 19; //Doesn't matter, we don't actually write training data
+      int dataBoardLen = 19; //Doesn't matter, we don't actually write training data
       FinishedGameData* gameData = NULL;
 
       int64_t gameIdx;
@@ -417,7 +420,7 @@ int MainCmds::gatekeeper(int argc, const char* const* argv) {
       if(netAndStuff->matchPairer->getMatchup(gameIdx, botSpecB, botSpecW, logger)) {
         gameData = gameRunner->runGame(
           gameIdx, botSpecB, botSpecW, NULL, NULL, logger,
-          dataPosLen, stopConditions, NULL
+          dataBoardLen, dataBoardLen, stopConditions, NULL
         );
       }
 
@@ -536,6 +539,7 @@ int MainCmds::gatekeeper(int argc, const char* const* argv) {
   //Delete and clean up everything else
   NeuralNet::globalCleanup();
   delete gameRunner;
+  ScoreValue::freeTables();
 
   if(sigReceived.load())
     logger.write("Exited cleanly after signal");

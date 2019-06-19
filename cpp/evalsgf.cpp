@@ -29,8 +29,9 @@ int MainCmds::evalsgf(int argc, const char* const* argv) {
   bool printRootNNValues;
   bool printScoreNow;
   bool printRootEndingBonus;
+  int rawNNSymmetry;
   try {
-    TCLAP::CmdLine cmd("Run a search on a position from an sgf file", ' ', "1.0",true);
+    TCLAP::CmdLine cmd("Run a search on a position from an sgf file", ' ', Version::getKataGoVersionForHelp(),true);
     TCLAP::ValueArg<string> configFileArg("","config","Config file to use (see configs/gtp_example.cfg)",true,string(),"FILE");
     TCLAP::ValueArg<string> modelFileArg("","model","Neural net model file to use",true,string(),"FILE");
     TCLAP::UnlabeledValueArg<string> sgfFileArg("","Sgf file to analyze",true,string(),"FILE");
@@ -46,6 +47,7 @@ int MainCmds::evalsgf(int argc, const char* const* argv) {
     TCLAP::SwitchArg printRootNNValuesArg("","print-root-nn-values","Print root nn values");
     TCLAP::SwitchArg printScoreNowArg("","print-score-now","Print score now");
     TCLAP::SwitchArg printRootEndingBonusArg("","print-root-ending-bonus","Print root ending bonus now");
+    TCLAP::ValueArg<int> rawNNSymmetryArg("","raw-nn","Perform single raw neural net eval with given symmetry (0-7)", false, -1, "INT");
     cmd.add(configFileArg);
     cmd.add(modelFileArg);
     cmd.add(sgfFileArg);
@@ -61,6 +63,7 @@ int MainCmds::evalsgf(int argc, const char* const* argv) {
     cmd.add(printRootNNValuesArg);
     cmd.add(printScoreNowArg);
     cmd.add(printRootEndingBonusArg);
+    cmd.add(rawNNSymmetryArg);
     cmd.parse(argc,argv);
     configFile = configFileArg.getValue();
     modelFile = modelFileArg.getValue();
@@ -77,6 +80,7 @@ int MainCmds::evalsgf(int argc, const char* const* argv) {
     printRootNNValues = printRootNNValuesArg.getValue();
     printScoreNow = printScoreNowArg.getValue();
     printRootEndingBonus = printRootEndingBonusArg.getValue();
+    rawNNSymmetry = rawNNSymmetryArg.getValue();
 
     if(printBranch.length() > 0 && print.length() > 0) {
       cerr << "Error: -print-branch and -print both specified" << endl;
@@ -91,6 +95,10 @@ int MainCmds::evalsgf(int argc, const char* const* argv) {
     }
     if(extraMoves.length() <= 0)
       extraMoves = extra;
+    if(rawNNSymmetry < -1 || rawNNSymmetry >= 8) {
+      cerr << "Error: invalid value for raw-nn" << endl;
+      return 1;
+    }
   }
   catch (TCLAP::ArgException &e) {
     cerr << "Error: " << e.error() << " for argument " << e.argId() << endl;
@@ -100,19 +108,9 @@ int MainCmds::evalsgf(int argc, const char* const* argv) {
   //Parse config and rules -------------------------------------------------------------------
 
   ConfigParser cfg(configFile);
-  Rules initialRules;
-  {
-    //All of these might get overwritten by the sgf
-    string koRule = cfg.getString("koRule", Rules::koRuleStrings());
-    string scoringRule = cfg.getString("scoringRule", Rules::scoringRuleStrings());
-    bool multiStoneSuicideLegal = cfg.getBool("multiStoneSuicideLegal");
-    float komi = 7.5f; //Default komi, sgf will generally override this
+  Rules defaultRules = Rules::getTrompTaylorish();
 
-    initialRules.koRule = Rules::parseKoRule(koRule);
-    initialRules.scoringRule = Rules::parseScoringRule(scoringRule);
-    initialRules.multiStoneSuicideLegal = multiStoneSuicideLegal;
-    initialRules.komi = komi;
-  }
+  Player perspective = Setup::parseReportAnalysisWinrates(cfg,P_BLACK);
 
   //Parse sgf file and board ------------------------------------------------------------------
 
@@ -121,29 +119,36 @@ int MainCmds::evalsgf(int argc, const char* const* argv) {
   Board board;
   Player nextPla;
   BoardHistory hist;
-  sgf->setupInitialBoardAndHist(initialRules, board, nextPla, hist);
-  vector<Move>& moves = sgf->moves;
 
-  if(!isnan(overrideKomi)) {
-    if(overrideKomi > board.x_size * board.y_size || overrideKomi < -board.x_size * board.y_size)
-      throw StringError("Invalid komi, greater than the area of the board");
-    hist.setKomi(overrideKomi);
-  }
+  auto setUpBoardUsingRules = [&board,&nextPla,&hist,overrideKomi,moveNum,&sgf](const Rules& initialRules) {
+    sgf->setupInitialBoardAndHist(initialRules, board, nextPla, hist);
+    vector<Move>& moves = sgf->moves;
 
-  if(moveNum < 0)
-    throw StringError("Move num " + Global::intToString(moveNum) + " requested but must be non-negative");
-  if(moveNum > moves.size())
-    throw StringError("Move num " + Global::intToString(moveNum) + " requested but sgf has only " + Global::intToString(moves.size()));
-
-  for(int i = 0; i<moveNum; i++) {
-    if(!board.isLegal(moves[i].loc,moves[i].pla,hist.rules.multiStoneSuicideLegal)) {
-      cerr << board << endl;
-      cerr << "SGF Illegal move " << (i+1) << " for " << colorToChar(moves[i].pla) << ": " << Location::toString(moves[i].loc,board) << endl;
-      return 1;
+    if(!isnan(overrideKomi)) {
+      if(overrideKomi > board.x_size * board.y_size || overrideKomi < -board.x_size * board.y_size)
+        throw StringError("Invalid komi, greater than the area of the board");
+      hist.setKomi(overrideKomi);
     }
-    hist.makeBoardMoveAssumeLegal(board,moves[i].loc,moves[i].pla,NULL);
-    nextPla = getOpp(moves[i].pla);
-  }
+
+    if(moveNum < 0)
+      throw StringError("Move num " + Global::intToString(moveNum) + " requested but must be non-negative");
+    if(moveNum > moves.size())
+      throw StringError("Move num " + Global::intToString(moveNum) + " requested but sgf has only " + Global::intToString(moves.size()));
+
+    for(int i = 0; i<moveNum; i++) {
+      //Tolerate suicide moves in an sgf, regardless of what the nominal rules were
+      bool multiStoneSuicideLegal = true;
+      if(!board.isLegal(moves[i].loc,moves[i].pla,multiStoneSuicideLegal)) {
+        cerr << board << endl;
+        cerr << "SGF Illegal move " << (i+1) << " for " << colorToChar(moves[i].pla) << ": " << Location::toString(moves[i].loc,board) << endl;
+        throw StringError("Illegal move in SGF");
+      }
+      hist.makeBoardMoveAssumeLegal(board,moves[i].loc,moves[i].pla,NULL);
+      nextPla = getOpp(moves[i].pla);
+    }
+  };
+  Rules initialRules = sgf->getRulesFromSgf(defaultRules);
+  setUpBoardUsingRules(initialRules);
 
   //Parse move sequence arguments------------------------------------------
 
@@ -192,7 +197,7 @@ int MainCmds::evalsgf(int argc, const char* const* argv) {
   else {
     params.numThreads = numThreads;
   }
-  
+
   string searchRandSeed;
   if(cfg.contains("searchRandSeed"))
     searchRandSeed = cfg.getString("searchRandSeed");
@@ -203,14 +208,41 @@ int MainCmds::evalsgf(int argc, const char* const* argv) {
   {
     Setup::initializeSession(cfg);
     int maxConcurrentEvals = params.numThreads * 2 + 16; // * 2 + 16 just to give plenty of headroom
-    vector<NNEvaluator*> nnEvals = Setup::initializeNNEvaluators({modelFile},{modelFile},cfg,logger,seedRand,maxConcurrentEvals,false,false,std::max(board.x_size,board.y_size));
+    vector<NNEvaluator*> nnEvals =
+      Setup::initializeNNEvaluators(
+        {modelFile},{modelFile},cfg,logger,seedRand,maxConcurrentEvals,
+        false,false,board.x_size,board.y_size,rawNNSymmetry
+      );
     assert(nnEvals.size() == 1);
     nnEval = nnEvals[0];
   }
   logger.write("Loaded neural net");
 
+  {
+    bool rulesWereSupported;
+    Rules supportedRules = nnEval->getSupportedRules(initialRules,rulesWereSupported);
+    if(!rulesWereSupported) {
+      cout << "Warning: Rules " << initialRules << " from sgf not supported by neural net, using " << supportedRules << " instead" << endl;
+      //Attempt to re-set-up the board using supported rules
+      setUpBoardUsingRules(supportedRules);
+    }
+  }
+
   //Check for unused config keys
   cfg.warnUnusedKeys(cerr,&logger);
+
+  if(rawNNSymmetry >= 0) {
+    NNResultBuf buf;
+    bool skipCache = true;
+    bool includeOwnerMap = true;
+    nnEval->evaluate(board,hist,nextPla,params.drawEquivalentWinsForWhite,buf,NULL,skipCache,includeOwnerMap);
+
+    cout << "Rules: " << hist.rules << endl;
+    cout << "Encore phase " << hist.encorePhase << endl;
+    Board::printBoard(cout, board, Board::NULL_LOC, &(hist.moveHistory));
+    buf.result->debugPrint(cout,board);
+    return 0;
+  }
 
   AsyncBot* bot = new AsyncBot(params, nnEval, &logger, searchRandSeed);
 
@@ -255,7 +287,7 @@ int MainCmds::evalsgf(int argc, const char* const* argv) {
 
   if(printOwnership) {
     sout << "Ownership map (ROOT position):\n";
-    search->printRootOwnershipMap(sout);
+    search->printRootOwnershipMap(sout,perspective);
   }
 
   if(printRootNNValues) {
@@ -287,7 +319,7 @@ int MainCmds::evalsgf(int argc, const char* const* argv) {
 
     sout << "Komi: " << copyHist.rules.komi << endl;
     sout << "WBonus: " << copyHist.whiteBonusScore << endl;
-    sout << "Final: " << copyHist.finalWhiteMinusBlackScore << endl;
+    sout << "Final: "; WriteSgf::printGameResult(sout, copyHist); sout << endl;
   }
 
   if(printRootEndingBonus) {
@@ -304,14 +336,14 @@ int MainCmds::evalsgf(int argc, const char* const* argv) {
   search->printPV(sout, search->rootNode, 25);
   sout << "\n";
   sout << "Tree:\n";
-  search->printTree(sout, search->rootNode, options);
+  search->printTree(sout, search->rootNode, options, perspective);
   logger.write(sout.str());
 
   delete bot;
   delete nnEval;
   NeuralNet::globalCleanup();
   delete sgf;
+  ScoreValue::freeTables();
 
   return 0;
 }
-

@@ -1,6 +1,8 @@
+#include "../game/boardhistory.h"
 
 #include <algorithm>
-#include "../game/boardhistory.h"
+
+using namespace std;
 
 static Hash128 getKoHash(const Rules& rules, const Board& board, Player pla, int encorePhase, Hash128 koProhibitHash) {
   if(rules.koRule == Rules::KO_SITUATIONAL || encorePhase > 0)
@@ -136,6 +138,7 @@ BoardHistory::BoardHistory(BoardHistory&& other) noexcept
   koHistoryLastClearedBeginningMoveIdx(other.koHistoryLastClearedBeginningMoveIdx),
   initialBoard(other.initialBoard),
   initialPla(other.initialPla),
+  recentBoards(),
   currentRecentBoardIdx(other.currentRecentBoardIdx),
   consecutiveEndingPasses(other.consecutiveEndingPasses),
   hashesAfterBlackPass(std::move(other.hashesAfterBlackPass)),hashesAfterWhitePass(std::move(other.hashesAfterWhitePass)),
@@ -145,7 +148,7 @@ BoardHistory::BoardHistory(BoardHistory&& other) noexcept
   isGameFinished(other.isGameFinished),winner(other.winner),finalWhiteMinusBlackScore(other.finalWhiteMinusBlackScore),
   isNoResult(other.isNoResult),isResignation(other.isResignation)
 {
-  std::copy(other.recentBoards, other.recentBoards + NUM_RECENT_BOARDS, recentBoards);
+  std::copy(other.recentBoards, other.recentBoards+NUM_RECENT_BOARDS, recentBoards);
   std::copy(other.wasEverOccupiedOrPlayed, other.wasEverOccupiedOrPlayed+Board::MAX_ARR_SIZE, wasEverOccupiedOrPlayed);
   std::copy(other.superKoBanned, other.superKoBanned+Board::MAX_ARR_SIZE, superKoBanned);
   std::copy(other.blackKoProhibited, other.blackKoProhibited+Board::MAX_ARR_SIZE, blackKoProhibited);
@@ -255,6 +258,7 @@ void BoardHistory::clear(const Board& board, Player pla, const Rules& r, int ePh
 
 void BoardHistory::printDebugInfo(ostream& out, const Board& board) const {
   out << board << endl;
+  out << "Initial pla " << playerToString(initialPla) << endl;
   out << "Encore phase " << encorePhase << endl;
   out << "Rules " << rules << endl;
   out << "Ko prohib hash " << koProhibitHash << endl;

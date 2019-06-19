@@ -38,10 +38,7 @@ parser.add_argument('-batch-size', help='Expected batch size of the input data, 
 parser.add_argument('-samples-per-epoch', help='Number of data samples to consider as one epoch', type=int, required=True)
 parser.add_argument('-gpu-memory-frac', help='Fraction of gpu memory to use', type=float, required=True)
 parser.add_argument('-model-kind', help='String name for what model to use', required=True)
-parser.add_argument('-lr-epoch-offset', help='Start at effectively this epoch for LR purposes', type=float, required=False)
-parser.add_argument('-lr-epoch-scale', help='Scale epochs by this for LR purposes', type=float, required=False)
-parser.add_argument('-lr-epoch-cap', help='Stop decreasing LR at this epoch', type=float, required=False)
-parser.add_argument('-lr-scale', help='LR at epoch 0', type=float, required=False)
+parser.add_argument('-lr-scale', help='LR multiplier on the hardcoded schedule', type=float, required=False)
 parser.add_argument('-sub-epochs', help='Reload training data up to this many times per epoch', type=int, required=True)
 parser.add_argument('-swa-sub-epoch-scale', help='Number of sub-epochs to average in expectation together for SWA', type=float, required=False)
 parser.add_argument('-verbose', help='verbose', required=False, action='store_true')
@@ -57,9 +54,6 @@ batch_size = args["batch_size"]
 samples_per_epoch = args["samples_per_epoch"]
 gpu_memory_frac = args["gpu_memory_frac"]
 model_kind = args["model_kind"]
-lr_epoch_offset = args["lr_epoch_offset"]
-lr_epoch_scale = args["lr_epoch_scale"]
-lr_epoch_cap = args["lr_epoch_cap"]
 lr_scale = args["lr_scale"]
 sub_epochs = args["sub_epochs"]
 swa_sub_epoch_scale = args["swa_sub_epoch_scale"]
@@ -165,7 +159,7 @@ def model_fn(features,labels,mode,params):
 
   print_model = not printed_model_yet
 
-  built = ModelUtils.build_model_from_tfrecords_features(features,mode,print_model,trainlog,model_config,pos_len,num_batches_per_epoch,lr_epoch_offset,lr_epoch_scale,lr_epoch_cap,lr_scale)
+  built = ModelUtils.build_model_from_tfrecords_features(features,mode,print_model,trainlog,model_config,pos_len,num_batches_per_epoch,lr_scale)
 
   if mode == tf.estimator.ModeKeys.PREDICT:
     model = built
@@ -214,33 +208,33 @@ def model_fn(features,labels,mode,params):
     (model,target_vars,metrics,global_step,global_step_float,per_sample_learning_rate,train_step) = built
     printed_model_yet = True
 
-    def moving_mean(x,weights):
+    def moving_mean(name,x,weights):
       sumwx = tf.reduce_sum(x*weights)
-      sumw = tf.reduce_sum(weights)
+      sumw = tf.reduce_sum(weights,name="printstats/"+name)
       ema = tf.train.ExponentialMovingAverage(decay=0.999)
       op = ema.apply([sumwx,sumw])
       avg = ema.average(sumwx) / ema.average(sumw)
       return (avg,op)
 
-    (p0loss,p0loss_op) = moving_mean(target_vars.policy_loss_unreduced, weights=target_vars.target_weight_used)
-    (p1loss,p1loss_op) = moving_mean(target_vars.policy1_loss_unreduced, weights=target_vars.target_weight_used)
-    (vloss,vloss_op) = moving_mean(target_vars.value_loss_unreduced, weights=target_vars.target_weight_used)
-    (smloss,smloss_op) = moving_mean(target_vars.scoremean_loss_unreduced, weights=target_vars.target_weight_used)
-    (sbpdfloss,sbpdfloss_op) = moving_mean(target_vars.scorebelief_pdf_loss_unreduced, weights=target_vars.target_weight_used)
-    (sbcdfloss,sbcdfloss_op) = moving_mean(target_vars.scorebelief_cdf_loss_unreduced, weights=target_vars.target_weight_used)
-    (bbpdfloss,bbpdfloss_op) = moving_mean(target_vars.bonusbelief_pdf_loss_unreduced, weights=target_vars.target_weight_used)
-    (bbcdfloss,bbcdfloss_op) = moving_mean(target_vars.bonusbelief_cdf_loss_unreduced, weights=target_vars.target_weight_used)
-    (uvloss,uvloss_op) = moving_mean(target_vars.utilityvar_loss_unreduced, weights=target_vars.target_weight_used)
-    (oloss,oloss_op) = moving_mean(target_vars.ownership_loss_unreduced, weights=target_vars.target_weight_used)
-    (rwlloss,rwlloss_op) = moving_mean(target_vars.winloss_reg_loss_unreduced, weights=target_vars.target_weight_used)
-    (rsmloss,rsmloss_op) = moving_mean(target_vars.scoremean_reg_loss_unreduced, weights=target_vars.target_weight_used)
-    (rsdloss,rsdloss_op) = moving_mean(target_vars.scorestdev_reg_loss_unreduced, weights=target_vars.target_weight_used)
-    (roloss,roloss_op) = moving_mean(target_vars.ownership_reg_loss_unreduced, weights=target_vars.target_weight_used)
-    (rloss,rloss_op) = moving_mean(target_vars.reg_loss_per_weight, weights=target_vars.weight_sum)
-    (rscloss,rscloss_op) = moving_mean(target_vars.scale_reg_loss_unreduced, weights=target_vars.target_weight_used)
-    (pacc1,pacc1_op) = moving_mean(metrics.accuracy1_unreduced, weights=target_vars.target_weight_used)
-    (ventr,ventr_op) = moving_mean(metrics.value_entropy_unreduced, weights=target_vars.target_weight_used)
-    (ptentr,ptentr_op) = moving_mean(metrics.policy_target_entropy_unreduced, weights=target_vars.target_weight_used)
+    (p0loss,p0loss_op) = moving_mean("p0loss",target_vars.policy_loss_unreduced, weights=target_vars.target_weight_used)
+    (p1loss,p1loss_op) = moving_mean("p1loss",target_vars.policy1_loss_unreduced, weights=target_vars.target_weight_used)
+    (vloss,vloss_op) = moving_mean("vloss",target_vars.value_loss_unreduced, weights=target_vars.target_weight_used)
+    (smloss,smloss_op) = moving_mean("smloss",target_vars.scoremean_loss_unreduced, weights=target_vars.target_weight_used)
+    (sbpdfloss,sbpdfloss_op) = moving_mean("sbpdfloss",target_vars.scorebelief_pdf_loss_unreduced, weights=target_vars.target_weight_used)
+    (sbcdfloss,sbcdfloss_op) = moving_mean("sbcdfloss",target_vars.scorebelief_cdf_loss_unreduced, weights=target_vars.target_weight_used)
+    (bbpdfloss,bbpdfloss_op) = moving_mean("bbpdfloss",target_vars.bonusbelief_pdf_loss_unreduced, weights=target_vars.target_weight_used)
+    (bbcdfloss,bbcdfloss_op) = moving_mean("bbcdfloss",target_vars.bonusbelief_cdf_loss_unreduced, weights=target_vars.target_weight_used)
+    (uvloss,uvloss_op) = moving_mean("uvloss",target_vars.utilityvar_loss_unreduced, weights=target_vars.target_weight_used)
+    (oloss,oloss_op) = moving_mean("oloss",target_vars.ownership_loss_unreduced, weights=target_vars.target_weight_used)
+    (rwlloss,rwlloss_op) = moving_mean("rwlloss",target_vars.winloss_reg_loss_unreduced, weights=target_vars.target_weight_used)
+    (rsmloss,rsmloss_op) = moving_mean("rsmloss",target_vars.scoremean_reg_loss_unreduced, weights=target_vars.target_weight_used)
+    (rsdloss,rsdloss_op) = moving_mean("rsdloss",target_vars.scorestdev_reg_loss_unreduced, weights=target_vars.target_weight_used)
+    (roloss,roloss_op) = moving_mean("roloss",target_vars.ownership_reg_loss_unreduced, weights=target_vars.target_weight_used)
+    (rloss,rloss_op) = moving_mean("rloss",target_vars.reg_loss_per_weight, weights=target_vars.weight_sum)
+    (rscloss,rscloss_op) = moving_mean("rscloss",target_vars.scale_reg_loss_unreduced, weights=target_vars.target_weight_used)
+    (pacc1,pacc1_op) = moving_mean("pacc1",metrics.accuracy1_unreduced, weights=target_vars.target_weight_used)
+    (ventr,ventr_op) = moving_mean("ventr",metrics.value_entropy_unreduced, weights=target_vars.target_weight_used)
+    (ptentr,ptentr_op) = moving_mean("ptentr",metrics.policy_target_entropy_unreduced, weights=target_vars.target_weight_used)
     (wmean,wmean_op) = tf.metrics.mean(target_vars.weight_sum)
 
     print_train_loss_every_batches = 100
@@ -307,7 +301,7 @@ num_bin_input_features = Model.get_num_bin_input_features(model_config)
 num_global_input_features = Model.get_num_global_input_features(model_config)
 
 NUM_POLICY_TARGETS = 2
-NUM_GLOBAL_TARGETS = 56
+NUM_GLOBAL_TARGETS = 64
 NUM_VALUE_SPATIAL_TARGETS = 1
 EXTRA_SCORE_DISTR_RADIUS = 60
 BONUS_SCORE_RADIUS = 30
@@ -585,6 +579,10 @@ while True:
 
       dump_and_flush_json(trainhistory,os.path.join(savepathtmp,"trainhistory.json"))
       with open(os.path.join(savepathtmp,"model.config.json"),"w") as f:
+        json.dump(model_config,f)
+      with open(os.path.join(savepathtmp,"saved_model","model.config.json"),"w") as f:
+        json.dump(model_config,f)
+      with open(os.path.join(savepathtmp,"non_swa_saved_model","model.config.json"),"w") as f:
         json.dump(model_config,f)
 
       time.sleep(1)

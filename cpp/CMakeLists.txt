@@ -9,6 +9,20 @@ set(BOOST_INDLUDEDIR "C:/Users/XJY/.nuget/packages/boost/1.68.0/lib/native/inclu
 include_directories(external)
 include_directories(external/tclap-1.2.1/include)
 
+if(APPLE)
+  # Fix linking on 10.14+. See https://stackoverflow.com/questions/54068035
+  include_directories(/usr/local/include)
+  link_directories(/usr/local/lib)
+endif()
+
+if(NOT WIN32)
+  string(ASCII 27 Esc)
+  set(ColorReset   "${Esc}[m")
+  set(ColorBold    "${Esc}[1m")
+  set(ColorRed     "${Esc}[31m")
+  set(ColorBoldRed "${ColorRed}${ColorBold}")
+endif()
+
 #------------------------------------------------------------------------------------
 
 if(BUILD_WRITE)
@@ -24,9 +38,9 @@ if(BUILD_MCTS)
     set(CMAKE_CUDA_FLAGS
       "-gencode arch=compute_30,code=sm_30 -gencode arch=compute_30,code=compute_30 -gencode arch=compute_37,code=sm_37 -gencode arch=compute_53,code=sm_53 -gencode arch=compute_53,code=compute_53 -gencode arch=compute_70,code=sm_70 -gencode arch=compute_70,code=compute_70"
       )
-
   else()
-    message(FATAL_ERROR "Please specify -DUSE_CUDA_BACKEND=1 (right now CUDA the only option, but in the future there may be others)")
+    message(WARNING "${ColorBoldRed}WARNING: Using dummy neural net backend, intended for non-neural-net testing only, will fail on any code path requiring a neural net. Specify -DUSE_CUDA_BACKEND=1 to compile with CUDA to use neural net.${ColorReset}")
+    set(NEURALNET_BACKEND_SOURCES neuralnet/dummybackend.cpp)
   endif()
 endif()
 
@@ -93,6 +107,7 @@ endif()
 if(BUILD_MCTS)
   add_executable(main
     core/global.cpp
+    core/config.cpp
     core/config_parser.cpp
     core/elo.cpp
     core/fancymath.cpp
@@ -100,8 +115,12 @@ if(BUILD_MCTS)
     core/logger.cpp
     core/makedir.cpp
     core/md5.cpp
+    core/multithread.cpp
     core/rand.cpp
+    core/rand_helpers.cpp
     core/sha2.cpp
+    core/test.cpp
+    core/threadsafequeue.cpp
     core/timer.cpp
     game/board.cpp
     game/rules.cpp
@@ -114,6 +133,7 @@ if(BUILD_MCTS)
     neuralnet/nninputs.cpp
     neuralnet/modelversion.cpp
     neuralnet/nneval.cpp
+    neuralnet/desc.cpp
     ${NEURALNET_BACKEND_SOURCES}
     search/timecontrols.cpp
     search/searchparams.cpp
@@ -129,10 +149,12 @@ if(BUILD_MCTS)
     tests/testboardbasic.cpp
     tests/testrules.cpp
     tests/testscore.cpp
+    tests/testsgf.cpp
     tests/testnninputs.cpp
     tests/testsearch.cpp
     tests/testtime.cpp
     tests/testtrainingwrite.cpp
+    tests/testnn.cpp
     evalsgf.cpp
     gatekeeper.cpp
     gtp.cpp
@@ -154,7 +176,6 @@ if(BUILD_MCTS)
     target_link_libraries(main ${CUDNN_LIBRARY} ${CUDA_CUBLAS_LIBRARIES} ${CUDA_LIBRARIES})
   endif()
 
-  include_directories("C:/Users/XJY/.nuget/packages/boost/1.68.0/lib/native/include")
   #find_package(ZLIB REQUIRED)
   #if(ZLIB_FOUND)
     include_directories("C:/Users/XJY/.nuget/packages/zlib/1.2.8.1/build/native/include")
@@ -166,11 +187,20 @@ if(BUILD_MCTS)
   target_link_libraries(main "C:/Users/XJY/.nuget/packages/libzip/1.1.2.7/build/native/lib/x64/v140/Release/zip.lib")
 
   #find_package(Boost COMPONENTS system filesystem REQUIRED)
+  include_directories("C:/Users/XJY/.nuget/packages/boost/1.68.0/lib/native/include")
   target_link_libraries(main "C:/Users/XJY/.nuget/packages/boost_filesystem-vc141/1.68.0/lib/native/libboost_filesystem-vc141-mt-x64-1_68.lib" "C:/Users/XJY/.nuget/packages/boost_system-vc141/1.68.0/lib/native/libboost_system-vc141-mt-x64-1_68.lib")
 
   if(USE_TCMALLOC)
     target_link_libraries(main ${TCMALLOC_LIB})
   endif(USE_TCMALLOC)
+
+  # On g++ it seems like we need to explicitly link threads as well.
+  # It seems sometimes this is implied by other options automatically like when we enable CUDA, but we get link errors
+  # if we don't explicitly require threads it when attempting to build without CUDA
+  if(CMAKE_COMPILER_IS_GNUCC AND (NOT USE_CUDA_BACKEND))
+    find_package (Threads REQUIRED)
+    target_link_libraries(main Threads::Threads)
+  endif()
 
 endif()
 

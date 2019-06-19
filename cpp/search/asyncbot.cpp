@@ -1,6 +1,8 @@
+#include "../search/asyncbot.h"
 
 #include "../core/timer.h"
-#include "../search/asyncbot.h"
+
+using namespace std;
 
 static void searchThreadLoop(AsyncBot* asyncBot, Logger* logger) {
   try {
@@ -55,6 +57,9 @@ Player AsyncBot::getRootPla() const {
 Search* AsyncBot::getSearch() {
   return search;
 }
+const Search* AsyncBot::getSearch() const {
+  return search;
+}
 SearchParams AsyncBot::getParams() const {
   return search->searchParams;
 }
@@ -74,6 +79,10 @@ void AsyncBot::setKomiIfNew(float newKomi) {
 void AsyncBot::setRootPassLegal(bool b) {
   stopAndWait();
   search->setRootPassLegal(b);
+}
+void AsyncBot::setAlwaysIncludeOwnerMap(bool b) {
+  stopAndWait();
+  search->setAlwaysIncludeOwnerMap(b);
 }
 void AsyncBot::setParams(SearchParams params) {
   stopAndWait();

@@ -1,12 +1,12 @@
-#ifndef NNINPUTS_H
-#define NNINPUTS_H
+#ifndef NEURALNET_NNINPUTS_H_
+#define NEURALNET_NNINPUTS_H_
 
 #include "../core/global.h"
 #include "../core/hash.h"
 #include "../core/rand.h"
 #include "../game/board.h"
-#include "../game/rules.h"
 #include "../game/boardhistory.h"
+#include "../game/rules.h"
 
 namespace NNPos {
   const int MAX_BOARD_LEN = Board::MAX_LEN;
@@ -16,63 +16,25 @@ namespace NNPos {
   //Extra score distribution radius, used for writing score in data rows and for the neural net score belief output
   const int EXTRA_SCORE_DISTR_RADIUS = 60;
 
-  int xyToPos(int x, int y, int posLen);
-  int locToPos(Loc loc, int boardXSize, int posLen);
-  Loc posToLoc(int pos, int boardXSize, int boardYSize, int posLen);
-  bool isPassPos(int pos, int posLen);
-  int getPolicySize(int posLen);
+  int xyToPos(int x, int y, int nnXLen);
+  int locToPos(Loc loc, int boardXSize, int nnXLen, int nnYLen);
+  Loc posToLoc(int pos, int boardXSize, int boardYSize, int nnXLen, int nnYLen);
+  bool isPassPos(int pos, int nnXLen, int nnYLen);
+  int getPolicySize(int nnXLen, int nnYLen);
 }
 
 namespace NNInputs {
   const int NUM_SYMMETRY_BOOLS = 3;
   const int NUM_SYMMETRY_COMBINATIONS = 8;
 
-  const int NUM_FEATURES_V0 = 19;
-  const int ROW_SIZE_V0 = NNPos::MAX_BOARD_LEN * NNPos::MAX_BOARD_LEN * NUM_FEATURES_V0;
-
-  const int NUM_FEATURES_V1 = 19;
-  const int ROW_SIZE_V1 = NNPos::MAX_BOARD_LEN * NNPos::MAX_BOARD_LEN * NUM_FEATURES_V1;
-
-  const int NUM_FEATURES_V2 = 17;
-  const int ROW_SIZE_V2 = NNPos::MAX_BOARD_LEN * NNPos::MAX_BOARD_LEN * NUM_FEATURES_V2;
-
-  const int NUM_FEATURES_BIN_V3 = 22;
+  const int NUM_FEATURES_SPATIAL_V3 = 22;
   const int NUM_FEATURES_GLOBAL_V3 = 14;
 
-  const int NUM_FEATURES_BIN_V4 = 22;
+  const int NUM_FEATURES_SPATIAL_V4 = 22;
   const int NUM_FEATURES_GLOBAL_V4 = 14;
 
-  const int NUM_FEATURES_BIN_V5 = 13;
+  const int NUM_FEATURES_SPATIAL_V5 = 13;
   const int NUM_FEATURES_GLOBAL_V5 = 12;
-
-  Hash128 getHashV0(
-    const Board& board, const vector<Move>& moveHistory, int moveHistoryLen,
-    Player nextPlayer, float selfKomi
-  );
-  //Neural net input format that was pre-rules-implementation, doesn't handle superko and
-  //doesn't get told about the rules
-  void fillRowV0(
-    const Board& board, const vector<Move>& moveHistory, int moveHistoryLen,
-    Player nextPlayer, float selfKomi, int posLen, bool useNHWC, float* row
-  );
-
-  //Handles superko and works for tromp-taylor, but otherwise not all rules implemented
-  Hash128 getHashV1(
-    const Board& board, const BoardHistory& boardHistory, Player nextPlayer
-  );
-  void fillRowV1(
-    const Board& board, const BoardHistory& boardHistory, Player nextPlayer,
-    int posLen, bool useNHWC, float* row
-  );
-
-  //Slightly more complete rules support, new ladder features, compressed some features
-  Hash128 getHashV2(
-    const Board& board, const BoardHistory& boardHistory, Player nextPlayer
-  );
-  void fillRowV2(
-    const Board& board, const BoardHistory& boardHistory, Player nextPlayer,
-    int posLen, bool useNHWC, float* row
-  );
 
   //Ongoing sandbox for full rules support for self play
   Hash128 getHashV3(
@@ -81,7 +43,7 @@ namespace NNInputs {
   );
   void fillRowV3(
     const Board& board, const BoardHistory& boardHistory, Player nextPlayer,
-    double drawEquivalentWinsForWhite, int posLen, bool useNHWC, float* rowBin, float* rowGlobal
+    double drawEquivalentWinsForWhite, int nnXLen, int nnYLen, bool useNHWC, float* rowBin, float* rowGlobal
   );
 
   Hash128 getHashV4(
@@ -90,7 +52,7 @@ namespace NNInputs {
   );
   void fillRowV4(
     const Board& board, const BoardHistory& boardHistory, Player nextPlayer,
-    double drawEquivalentWinsForWhite, int posLen, bool useNHWC, float* rowBin, float* rowGlobal
+    double drawEquivalentWinsForWhite, int nnXLen, int nnYLen, bool useNHWC, float* rowBin, float* rowGlobal
   );
 
   Hash128 getHashV5(
@@ -99,7 +61,7 @@ namespace NNInputs {
   );
   void fillRowV5(
     const Board& board, const BoardHistory& boardHistory, Player nextPlayer,
-    double drawEquivalentWinsForWhite, int posLen, bool useNHWC, float* rowBin, float* rowGlobal
+    double drawEquivalentWinsForWhite, int nnXLen, int nnYLen, bool useNHWC, float* rowBin, float* rowGlobal
   );
 
 }
@@ -122,8 +84,9 @@ struct NNOutput {
   //Values in here will be set to negative for illegal moves, including superko
   float policyProbs[NNPos::MAX_NN_POLICY_SIZE];
 
-  int posLen;
-  //If not NULL, then this contains a posLen*posLen-sized map of expected ownership on the board.
+  int nnXLen;
+  int nnYLen;
+  //If not NULL, then this contains a nnXLen*nnYLen-sized map of expected ownership on the board.
   float* whiteOwnerMap;
 
   NNOutput(); //Does NOT initialize values
@@ -131,6 +94,8 @@ struct NNOutput {
   ~NNOutput();
 
   NNOutput& operator=(const NNOutput&);
+
+  void debugPrint(std::ostream& out, const Board& board);
 };
 
 //Utility functions for computing the "scoreValue", the unscaled utility of various numbers of points, prior to multiplication by
@@ -138,6 +103,7 @@ struct NNOutput {
 namespace ScoreValue {
   //MUST BE CALLED AT PROGRAM START!
   void initTables();
+  void freeTables();
 
   //The number of wins a game result should count as
   double whiteWinsOfWinner(Player winner, double drawEquivalentWinsForWhite);
@@ -160,7 +126,4 @@ namespace ScoreValue {
   double expectedWhiteScoreValue(double whiteScoreMean, double whiteScoreStdev, double center, double scale, const Board& b);
 }
 
-#endif
-
-
-
+#endif  // NEURALNET_NNINPUTS_H_

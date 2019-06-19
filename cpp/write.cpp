@@ -6,6 +6,7 @@
 #include "dataio/lzparse.h"
 #include "dataio/datapool.h"
 #include "program/gitinfo.h"
+#include "main.h"
 #include <fstream>
 #include <algorithm>
 
@@ -15,9 +16,11 @@ using namespace H5;
 #define TCLAP_NAMESTARTSTRING "-" //Use single dashes for all flags
 #include <tclap/CmdLine.h>
 
+using namespace std;
+
 //Data and feature row parameters
 static const int maxBoardSize = NNPos::MAX_BOARD_LEN;
-static const int numFeatures = NNInputs::NUM_FEATURES_V2;
+static const int numFeatures = NNInputs::NUM_FEATURES_SPATIAL_V3;
 
 //Different segments of the data row
 static const int inputStart = 0;
@@ -163,10 +166,13 @@ static void fillRow(const Board& board, const BoardHistory& hist, const vector<M
   Player pla = nextPlayer;
   int xSize = board.x_size;
   int ySize = board.y_size;
-  int posLen = NNPos::MAX_BOARD_LEN;
+  int nnXLen = NNPos::MAX_BOARD_LEN;
+  int nnYLen = NNPos::MAX_BOARD_LEN;
 
   bool inputsUseNHWC = true;
-  NNInputs::fillRowV2(board,hist,nextPlayer,posLen,inputsUseNHWC,row);
+  (void)inputsUseNHWC;
+  throw StringError("Not implemented, need a bit of work to swtich write to use v3 features");
+  // NNInputs::fillRowV2(board,hist,nextPlayer,nnXLen,nnYLen,inputsUseNHWC,row);
 
   //Optionally some stuff we can multiply the history planes by to randomly exclude history from a few training samples
   bool includeHistory[5];
@@ -211,7 +217,7 @@ static void fillRow(const Board& board, const BoardHistory& hist, const vector<M
       for(int x = 0; x<xSize; x++) {
         Loc loc = Location::getLoc(x,y,xSize);
         if(b.colors[loc] == C_EMPTY && bPrev.colors[loc] != C_EMPTY) {
-          int pos = NNPos::xyToPos(x,y,posLen);
+          int pos = NNPos::xyToPos(x,y,nnXLen);
           row[recentCapturesStart+pos] = i+1;
         }
       }
@@ -222,9 +228,9 @@ static void fillRow(const Board& board, const BoardHistory& hist, const vector<M
   for(int i = 0; i<nextMovesLen; i++) {
     int idx = nextMoveIdx + i;
     if(idx >= moves.size())
-      row[nextMovesStart+i] = NNPos::locToPos(Board::NULL_LOC,xSize,posLen);
+      row[nextMovesStart+i] = NNPos::locToPos(Board::NULL_LOC,xSize,nnXLen,nnYLen);
     else {
-      row[nextMovesStart+i] = NNPos::locToPos(moves[idx].loc,xSize,posLen);
+      row[nextMovesStart+i] = NNPos::locToPos(moves[idx].loc,xSize,nnXLen,nnYLen);
     }
   }
 
@@ -472,7 +478,8 @@ static void iterSgfMoves(
   CompactSgf* sgf,
   HandleRowFunc f
 ) {
-  int bSize;
+  int xSize;
+  int ySize;
   int source;
   int wRank;
   int bRank;
@@ -483,7 +490,8 @@ static void iterSgfMoves(
   const vector<Move>* placementsBuf = NULL;
   const vector<Move>* movesBuf = NULL;
   try {
-    bSize = sgf->bSize;
+    xSize = sgf->xSize;
+    ySize = sgf->ySize;
     const SgfNode& root = sgf->rootNode;
 
     source = parseSource(sgf);
@@ -529,8 +537,12 @@ static void iterSgfMoves(
       date = root.getSingleProperty("DT");
 
     //Apply some filters
-    if(bSize != 19)
+    //For human games 19x19 has good quality games, other sizes are uncommon and of mixed quality
+    //If specifically training on a small board game collection for a neural net that handles that size, can edit this
+    if(xSize != 19 || ySize != 19) {
+      cout << "Skipping sgf file due to not being 19x19: " << sgf->fileName << endl;
       return;
+    }
 
     placementsBuf = &(sgf->placements);
     movesBuf = &(sgf->moves);
@@ -550,7 +562,7 @@ static void iterSgfMoves(
   const vector<Move>& placements = *placementsBuf;
   const vector<Move>& moves = *movesBuf;
 
-  Board initialBoard(bSize,bSize);
+  Board initialBoard(xSize,ySize);
   bool multiStoneSuicideLegal = false; //False for KGS,GoGoD, etc
   for(int j = 0; j<placements.size(); j++) {
     Move m = placements[j];
@@ -612,12 +624,13 @@ static void iterSgfMoves(
 
     float policyTarget[policyTargetLen];
     {
-      int posLen = NNPos::MAX_BOARD_LEN;
+      int nnXLen = NNPos::MAX_BOARD_LEN;
+      int nnYLen = NNPos::MAX_BOARD_LEN;
       for(int k = 0; k<policyTargetLen; k++)
         policyTarget[k] = 0.0;
 
       assert(m.loc != Board::NULL_LOC);
-      int nextMovePos = NNPos::locToPos(m.loc,board.x_size,posLen);
+      int nextMovePos = NNPos::locToPos(m.loc,board.x_size,nnXLen,nnYLen);
       assert(nextMovePos >= 0 && nextMovePos < policyTargetLen);
       policyTarget[nextMovePos] = 1.0;
     }
@@ -1409,6 +1422,8 @@ int main(int argc, const char* argv[]) {
   for(int i = 0; i<sgfs.size(); i++) {
     delete sgfs[i];
   }
+  ScoreValue::freeTables();
+
   cout << "Everything cleaned up" << endl;
 
   return 0;

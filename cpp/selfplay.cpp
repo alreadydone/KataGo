@@ -9,7 +9,6 @@
 #include "search/asyncbot.h"
 #include "program/setup.h"
 #include "program/play.h"
-#include "program/gitinfo.h"
 #include "main.h"
 
 using namespace std;
@@ -166,7 +165,7 @@ int MainCmds::selfplay(int argc, const char* const* argv) {
   string modelsDir;
   string outputDir;
   try {
-    TCLAP::CmdLine cmd("Generate training data via self play", ' ', "1.0",true);
+    TCLAP::CmdLine cmd("Generate training data via self play", ' ', Version::getKataGoVersionForHelp(),true);
     TCLAP::ValueArg<string> configFileArg("","config-file","Config file to use",true,string(),"FILE");
     TCLAP::ValueArg<int>    inputsVersionArg("","inputs-version","Version of neural net input features to use for data",true,0,"INT");
     TCLAP::ValueArg<string> modelsDirArg("","models-dir","Dir to poll and load models from",true,string(),"DIR");
@@ -204,14 +203,14 @@ int MainCmds::selfplay(int argc, const char* const* argv) {
   logger.setLogToStdout(logToStdout);
 
   logger.write("Self Play Engine starting...");
-//  logger.write(string("Git revision: ") + GIT_REVISION);
+  logger.write(string("Git revision: ") + Version::getGitRevision());
 
   //Load runner settings
   const int numGameThreads = cfg.getInt("numGameThreads",1,16384);
   const string searchRandSeedBase = Global::uint64ToHexString(seedRand.nextUInt64());
 
-  //Width of the board to use when writing data, typically 19
-  const int dataPosLen = cfg.getInt("dataPosLen",9,37);
+  //Width and height of the board to use when writing data, typically 19
+  const int dataBoardLen = cfg.getInt("dataBoardLen",9,37);
   //Max number of games that we will allow to be queued up and not written out
   const int maxDataQueueSize = cfg.getInt("maxDataQueueSize",1,1000000);
   const int maxRowsPerTrainFile = cfg.getInt("maxRowsPerTrainFile",1,100000000);
@@ -313,7 +312,7 @@ int MainCmds::selfplay(int argc, const char* const* argv) {
   };
 
   auto loadLatestNeuralNet =
-    [inputsVersion,maxDataQueueSize,maxRowsPerTrainFile,maxRowsPerValFile,firstFileRandMinProp,dataPosLen,
+    [inputsVersion,maxDataQueueSize,maxRowsPerTrainFile,maxRowsPerValFile,firstFileRandMinProp,dataBoardLen,
      &modelsDir,&outputDir,&logger,&cfg,validationProp,numGameThreads](const string* lastNetName) -> NetAndStuff* {
 
     string modelName;
@@ -333,7 +332,10 @@ int MainCmds::selfplay(int argc, const char* const* argv) {
     int maxConcurrentEvals = cfg.getInt("numSearchThreads") * numGameThreads * 2 + 16;
 
     Rand rand;
-    vector<NNEvaluator*> nnEvals = Setup::initializeNNEvaluators({modelName},{modelFile},cfg,logger,rand,maxConcurrentEvals,debugSkipNeuralNetDefault,false,NNPos::MAX_BOARD_LEN);
+    vector<NNEvaluator*> nnEvals =
+      Setup::initializeNNEvaluators(
+        {modelName},{modelFile},cfg,logger,rand,maxConcurrentEvals,debugSkipNeuralNetDefault,false,NNPos::MAX_BOARD_LEN,NNPos::MAX_BOARD_LEN,-1
+      );
     assert(nnEvals.size() == 1);
     NNEvaluator* nnEval = nnEvals[0];
     logger.write("Loaded latest neural net " + modelName + " from: " + modelFile);
@@ -383,9 +385,9 @@ int MainCmds::selfplay(int argc, const char* const* argv) {
     //Note that this inputsVersion passed here is NOT necessarily the same as the one used in the neural net self play, it
     //simply controls the input feature version for the written data
     TrainingDataWriter* tdataWriter = new TrainingDataWriter(
-      tdataOutputDir, inputsVersion, maxRowsPerTrainFile, firstFileRandMinProp, dataPosLen, Global::uint64ToHexString(rand.nextUInt64()));
+      tdataOutputDir, inputsVersion, maxRowsPerTrainFile, firstFileRandMinProp, dataBoardLen, dataBoardLen, Global::uint64ToHexString(rand.nextUInt64()));
     TrainingDataWriter* vdataWriter = new TrainingDataWriter(
-      vdataOutputDir, inputsVersion, maxRowsPerValFile, firstFileRandMinProp, dataPosLen, Global::uint64ToHexString(rand.nextUInt64()));
+      vdataOutputDir, inputsVersion, maxRowsPerValFile, firstFileRandMinProp, dataBoardLen, dataBoardLen, Global::uint64ToHexString(rand.nextUInt64()));
     ofstream* sgfOut = sgfOutputDir.length() > 0 ? (new ofstream(sgfOutputDir + "/" + Global::uint64ToHexString(rand.nextUInt64()) + ".sgfs")) : NULL;
     NetAndStuff* newNet = new NetAndStuff(cfg, modelName, nnEval, maxDataQueueSize, tdataWriter, vdataWriter, sgfOut, validationProp);
     return newNet;
@@ -410,7 +412,7 @@ int MainCmds::selfplay(int argc, const char* const* argv) {
     &gameRunner,
     &logger,
     &netAndStuffsMutex,&netAndStuffs,
-    dataPosLen,
+    dataBoardLen,
     switchNetsMidGame,
     &fancyModes
   ](int threadIdx) {
@@ -463,7 +465,7 @@ int MainCmds::selfplay(int argc, const char* const* argv) {
       if(netAndStuff->matchPairer->getMatchup(gameIdx, botSpecB, botSpecW, logger)) {
         gameData = gameRunner->runGame(
           gameIdx, botSpecB, botSpecW, initialPosition, &nextInitialPosition, logger,
-          dataPosLen, stopConditions,
+          dataBoardLen, dataBoardLen, stopConditions,
           (switchNetsMidGame ? &checkForNewNNEval : NULL)
         );
       }
@@ -585,6 +587,7 @@ int MainCmds::selfplay(int argc, const char* const* argv) {
   //Delete and clean up everything else
   NeuralNet::globalCleanup();
   delete gameRunner;
+  ScoreValue::freeTables();
 
   if(sigReceived.load())
     logger.write("Exited cleanly after signal");

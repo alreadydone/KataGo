@@ -1,12 +1,12 @@
-#ifndef TRAINING_WRITE_H
-#define TRAINING_WRITE_H
+#ifndef DATAIO_TRAINING_WRITE_H_
+#define DATAIO_TRAINING_WRITE_H_
 
+#include "../dataio/numpywrite.h"
 #include "../neuralnet/nninputs.h"
 #include "../neuralnet/nninterface.h"
-#include "../dataio/numpywrite.h"
 
 STRUCT_NAMED_PAIR(Loc,loc,int16_t,policyTarget,PolicyTargetMove);
-STRUCT_NAMED_PAIR(vector<PolicyTargetMove>*,policyTargets,int64_t,unreducedNumVisits,PolicyTarget);
+STRUCT_NAMED_PAIR(std::vector<PolicyTargetMove>*,policyTargets,int64_t,unreducedNumVisits,PolicyTarget);
 
 struct ValueTargets {
   //As usual, these are from the perspective of white.
@@ -30,7 +30,7 @@ struct SidePosition {
   BoardHistory hist;
   Player pla;
   int64_t unreducedNumVisits;
-  vector<PolicyTargetMove> policyTarget;
+  std::vector<PolicyTargetMove> policyTarget;
   ValueTargets whiteValueTargets;
   float targetWeight;
   int numNeuralNetChangesSoFar; //Number of neural net changes this game before the creation of this side position
@@ -40,11 +40,11 @@ struct SidePosition {
   ~SidePosition();
 };
 
-STRUCT_NAMED_PAIR(string,name,int,turnNumber,ChangedNeuralNet);
+STRUCT_NAMED_PAIR(std::string,name,int,turnNumber,ChangedNeuralNet);
 
 struct FinishedGameData {
-  string bName;
-  string wName;
+  std::string bName;
+  std::string wName;
   int bIdx;
   int wIdx;
 
@@ -65,19 +65,20 @@ struct FinishedGameData {
 
   //If false, then we don't have these below vectors and ownership information
   bool hasFullData;
-  int posLen;
-  vector<float> targetWeightByTurn;
-  vector<PolicyTarget> policyTargetsByTurn;
-  vector<ValueTargets> whiteValueTargetsByTurn;
+  int dataXLen;
+  int dataYLen;
+  std::vector<float> targetWeightByTurn;
+  std::vector<PolicyTarget> policyTargetsByTurn;
+  std::vector<ValueTargets> whiteValueTargetsByTurn;
   int8_t* finalWhiteOwnership;
 
-  vector<SidePosition*> sidePositions;
-  vector<ChangedNeuralNet*> changedNeuralNets;
+  std::vector<SidePosition*> sidePositions;
+  std::vector<ChangedNeuralNet*> changedNeuralNets;
 
   FinishedGameData();
   ~FinishedGameData();
 
-  void printDebug(ostream& out) const;
+  void printDebug(std::ostream& out) const;
 };
 
 struct TrainingWriteBuffers {
@@ -85,7 +86,8 @@ struct TrainingWriteBuffers {
   int maxRows;
   int numBinaryChannels;
   int numGlobalChannels;
-  int posLen;
+  int dataXLen;
+  int dataYLen;
   int packedBoardArea;
 
   int curRows;
@@ -123,40 +125,43 @@ struct TrainingWriteBuffers {
 
   //C26 Weight assigned to the policy target
   //C27 Weight assigned to the final board ownership target and score distr and bonus score targets. Most training rows will have this be 1, some will be 0.
-  //C28: Weight assigned to the utilityvariance target
-  //C29: Weight assigned to the next move policy target
-  //C30: Unused
+  //C28: Weight assigned to the next move policy target
+  //C29-32: Weight assigned to the utilityvariance target C21-C24
+  //C33-35: Unused
 
-  //C31-35: Precomputed mask values indicating if we should use historical moves 1-5, if we desire random history masking.
+  //C36-40: Precomputed mask values indicating if we should use historical moves 1-5, if we desire random history masking.
   //1 means use, 0 means don't use.
 
-  //C36-41: 128-bit hash identifying the game which should also be output in the SGF data.
+  //C41-46: 128-bit hash identifying the game which should also be output in the SGF data.
   //Split into chunks of 22, 22, 20, 22, 22, 20 bits, little-endian style (since floats have > 22 bits of precision).
 
-  //C42: Komi, adjusted for draw utility and points costed or paid so far, from the perspective of the player to move.
-  //C43: 1 if we're in an area-scoring-like phase of the game (area scoring or second encore territory scoring)
+  //C47: Komi, adjusted for draw utility and points costed or paid so far, from the perspective of the player to move.
+  //C48: 1 if we're in an area-scoring-like phase of the game (area scoring or second encore territory scoring)
 
-  //C44: 1 if an earlier neural net started this game, compared to the latest in this data file.
-  //C45: If positive, an earlier neural net was playing this specific move, compared to the latest in this data file.
+  //C49: 1 if an earlier neural net started this game, compared to the latest in this data file.
+  //C50: If positive, an earlier neural net was playing this specific move, compared to the latest in this data file.
 
-  //C46: Turn number of the game, zero-indexed.
-  //C47: Did this game end via hitting turn limit?
-  //C48: First turn of this game that was selfplay for training rather than initialization (e.g. handicap stones, random init of the starting board pos)
-  //C49: Number of extra moves black got at the start (i.e. handicap games)
+  //C51: Turn number of the game, zero-indexed.
+  //C52: Did this game end via hitting turn limit?
+  //C53: First turn of this game that was selfplay for training rather than initialization (e.g. handicap stones, random init of the starting board pos)
+  //C54: Number of extra moves black got at the start (i.e. handicap games)
 
-  //C50-51: Game type, game typesource metadata
+  //C55-56: Game type, game typesource metadata
   // 0 = normal self-play game. C51 unused
   // 1 = encore-training game. C51 is the starting encore phase
-  //C52: 0 = normal, 1 = whole game was forked with an experimental move in the opening
-  //C53: 0 = normal, 1 = training sample was an isolated side position forked off of main game
-  //C54: Unused
-  //C55: Number of visits in the search generating this row, prior to any reduction.
+  //C57: 0 = normal, 1 = whole game was forked with an experimental move in the opening
+  //C58: 0 = normal, 1 = training sample was an isolated side position forked off of main game
+  //C59: Unused
+  //C60: Number of visits in the search generating this row, prior to any reduction.
+  //C61: Unused
+  //C62: Unused
+  //C63: Unused
 
   NumpyBuffer<float> globalTargetsNC;
 
   //Score target
-  //Indices correspond to scores, from (-posLen^2-EXTRA_SCORE_DISTR_RADIUS)-0.5 to (posLen^2+EXTRA_SCORE_DISTR_RADIUS)+0.5,
-  //making 2*posLen^2+2*EXTRA_SCORE_DISTR_RADIUS indices in total.
+  //Indices correspond to scores, from (-dataXLen*dataYLen-EXTRA_SCORE_DISTR_RADIUS)-0.5 to (dataXLen*dataYLen+EXTRA_SCORE_DISTR_RADIUS)+0.5,
+  //making 2*dataXLen*dataYLen+2*EXTRA_SCORE_DISTR_RADIUS indices in total.
   //Index of the actual score is labeled with 100, the rest labeled with 0, from the perspective of the player to move.
   //Except in case of integer komi, the value can be split between two adjacent labels based on value of draw.
   //Arbitrary if C26 has weight 0.
@@ -169,7 +174,7 @@ struct TrainingWriteBuffers {
   //C0 - Final board ownership (-1,0,1), from the perspective of the player to move. All 0 if C26 has weight 0.
   NumpyBuffer<int8_t> valueTargetsNCHW;
 
-  TrainingWriteBuffers(int inputsVersion, int maxRows, int numBinaryChannels, int numGlobalChannels, int posLen);
+  TrainingWriteBuffers(int inputsVersion, int maxRows, int numBinaryChannels, int numGlobalChannels, int dataXLen, int dataYLen);
   ~TrainingWriteBuffers();
 
   TrainingWriteBuffers(const TrainingWriteBuffers&) = delete;
@@ -182,9 +187,9 @@ struct TrainingWriteBuffers {
     int turnNumberAfterStart,
     float targetWeight,
     int64_t unreducedNumVisits,
-    const vector<PolicyTargetMove>* policyTarget0, //can be null
-    const vector<PolicyTargetMove>* policyTarget1, //can be null
-    const vector<ValueTargets>& whiteValueTargets,
+    const std::vector<PolicyTargetMove>* policyTarget0, //can be null
+    const std::vector<PolicyTargetMove>* policyTarget1, //can be null
+    const std::vector<ValueTargets>& whiteValueTargets,
     int whiteValueTargetsIdx, //index in whiteValueTargets corresponding to this turn.
     int8_t* finalWhiteOwnership,
     bool isSidePosition,
@@ -193,28 +198,28 @@ struct TrainingWriteBuffers {
     Rand& rand
   );
 
-  void writeToZipFile(const string& fileName);
-  void writeToTextOstream(ostream& out);
+  void writeToZipFile(const std::string& fileName);
+  void writeToTextOstream(std::ostream& out);
 
 };
 
 class TrainingDataWriter {
  public:
-  TrainingDataWriter(const string& outputDir, int inputsVersion, int maxRowsPerFile, double firstFileMinRandProp, int posLen, const string& randSeed);
-  TrainingDataWriter(ostream* debugOut, int inputsVersion, int maxRowsPerFile, double firstFileMinRandProp, int posLen, int onlyWriteEvery, const string& randSeed);
-  TrainingDataWriter(const string& outputDir, ostream* debugOut, int inputsVersion, int maxRowsPerFile, double firstFileMinRandProp, int posLen, int onlyWriteEvery, const string& randSeed);
+  TrainingDataWriter(const std::string& outputDir, int inputsVersion, int maxRowsPerFile, double firstFileMinRandProp, int dataXLen, int dataYLen, const std::string& randSeed);
+  TrainingDataWriter(std::ostream* debugOut, int inputsVersion, int maxRowsPerFile, double firstFileMinRandProp, int dataXLen, int dataYLen, int onlyWriteEvery, const std::string& randSeed);
+  TrainingDataWriter(const std::string& outputDir, std::ostream* debugOut, int inputsVersion, int maxRowsPerFile, double firstFileMinRandProp, int dataXLen, int dataYLen, int onlyWriteEvery, const std::string& randSeed);
   ~TrainingDataWriter();
 
   void writeGame(const FinishedGameData& data);
   void flushIfNonempty();
 
  private:
-  string outputDir;
+  std::string outputDir;
   int inputsVersion;
   Rand rand;
   TrainingWriteBuffers* writeBuffers;
 
-  ostream* debugOut;
+  std::ostream* debugOut;
   int debugOnlyWriteEvery;
   int64_t rowCount;
 
@@ -226,4 +231,4 @@ class TrainingDataWriter {
 };
 
 
-#endif
+#endif  // DATAIO_TRAININGWRITE_H_

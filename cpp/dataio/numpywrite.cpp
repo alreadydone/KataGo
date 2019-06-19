@@ -1,11 +1,12 @@
-
 #include "../dataio/numpywrite.h"
+
 #include <cstring>
 #include <zip.h>
 
 #define LITTLE_ENDIAN 1234
 #define BIG_ENDIAN    4321
 #define BYTE_ORDER LITTLE_ENDIAN
+using namespace std;
 
 #if !defined(BYTE_ORDER) || (BYTE_ORDER != LITTLE_ENDIAN && BYTE_ORDER != BIG_ENDIAN)
 #error Define BYTE_ORDER to be equal to either LITTLE_ENDIAN or BIG_ENDIAN

@@ -1,5 +1,7 @@
-
 #include "../dataio/trainingwrite.h"
+#include "../neuralnet/modelversion.h"
+
+using namespace std;
 
 ValueTargets::ValueTargets()
   :win(0),
@@ -66,7 +68,8 @@ FinishedGameData::FinishedGameData()
    modeMeta2(0),
 
    hasFullData(false),
-   posLen(-1),
+   dataXLen(-1),
+   dataYLen(-1),
    targetWeightByTurn(),
    policyTargetsByTurn(),
    whiteValueTargetsByTurn(),
@@ -108,7 +111,8 @@ void FinishedGameData::printDebug(ostream& out) const {
   out << "modeMeta1 " << modeMeta1 << endl;
   out << "modeMeta2 " << modeMeta2 << endl;
   out << "hasFullData " << hasFullData << endl;
-  out << "posLen " << posLen << endl;
+  out << "dataXLen " << dataXLen << endl;
+  out << "dataYLen " << dataYLen << endl;
   for(int i = 0; i<targetWeightByTurn.size(); i++)
     out << "targetWeightByTurn " << i << " " << targetWeightByTurn[i];
   out << endl;
@@ -130,7 +134,7 @@ void FinishedGameData::printDebug(ostream& out) const {
   }
   for(int y = 0; y<startBoard.y_size; y++) {
     for(int x = 0; x<startBoard.x_size; x++) {
-      int pos = NNPos::xyToPos(x,y,posLen);
+      int pos = NNPos::xyToPos(x,y,dataXLen);
       out << Global::strprintf("%5d",finalWhiteOwnership[pos]);
     }
     out << endl;
@@ -149,28 +153,29 @@ void FinishedGameData::printDebug(ostream& out) const {
 //Don't forget to update everything else in the header file and the code below too if changing any of these
 //And update the python code
 static const int POLICY_TARGET_NUM_CHANNELS = 2;
-static const int GLOBAL_TARGET_NUM_CHANNELS = 56;
+static const int GLOBAL_TARGET_NUM_CHANNELS = 64;
 static const int VALUE_SPATIAL_TARGET_NUM_CHANNELS = 1;
 static const int BONUS_SCORE_RADIUS = 30;
 
-TrainingWriteBuffers::TrainingWriteBuffers(int iVersion, int maxRws, int numBChannels, int numFChannels, int pLen)
+TrainingWriteBuffers::TrainingWriteBuffers(int iVersion, int maxRws, int numBChannels, int numFChannels, int xLen, int yLen)
   :inputsVersion(iVersion),
    maxRows(maxRws),
    numBinaryChannels(numBChannels),
    numGlobalChannels(numFChannels),
-   posLen(pLen),
-   packedBoardArea((pLen*pLen + 7)/8),
+   dataXLen(xLen),
+   dataYLen(yLen),
+   packedBoardArea((xLen*yLen + 7)/8),
    curRows(0),
    binaryInputNCHWUnpacked(NULL),
    binaryInputNCHWPacked({maxRws, numBChannels, packedBoardArea}),
    globalInputNC({maxRws, numFChannels}),
-   policyTargetsNCMove({maxRws, POLICY_TARGET_NUM_CHANNELS, NNPos::getPolicySize(pLen)}),
+   policyTargetsNCMove({maxRws, POLICY_TARGET_NUM_CHANNELS, NNPos::getPolicySize(xLen,yLen)}),
    globalTargetsNC({maxRws, GLOBAL_TARGET_NUM_CHANNELS}),
-   scoreDistrN({maxRws, pLen*pLen*2+NNPos::EXTRA_SCORE_DISTR_RADIUS*2}),
+   scoreDistrN({maxRws, xLen*yLen*2+NNPos::EXTRA_SCORE_DISTR_RADIUS*2}),
    selfBonusScoreN({maxRws, BONUS_SCORE_RADIUS*2+1}),
-   valueTargetsNCHW({maxRws, VALUE_SPATIAL_TARGET_NUM_CHANNELS, pLen, pLen})
+   valueTargetsNCHW({maxRws, VALUE_SPATIAL_TARGET_NUM_CHANNELS, yLen, xLen})
 {
-  binaryInputNCHWUnpacked = new float[numBChannels * pLen * pLen];
+  binaryInputNCHWUnpacked = new float[numBChannels * xLen * yLen];
 }
 
 TrainingWriteBuffers::~TrainingWriteBuffers()
@@ -216,12 +221,12 @@ static void uniformPolicyTarget(int policySize, int16_t* target) {
 }
 
 //Copy playouts into target, expanding out the sparse representation into a full plane.
-static void fillPolicyTarget(const vector<PolicyTargetMove>& policyTargetMoves, int policySize, int posLen, int boardXSize, int16_t* target) {
+static void fillPolicyTarget(const vector<PolicyTargetMove>& policyTargetMoves, int policySize, int dataXLen, int dataYLen, int boardXSize, int16_t* target) {
   zeroPolicyTarget(policySize,target);
   size_t size = policyTargetMoves.size();
   for(size_t i = 0; i<size; i++) {
     const PolicyTargetMove& move = policyTargetMoves[i];
-    int pos = NNPos::locToPos(move.loc, boardXSize, posLen);
+    int pos = NNPos::locToPos(move.loc, boardXSize, dataXLen, dataYLen);
     assert(pos >= 0 && pos < policySize);
     target[pos] = move.policyTarget;
   }
@@ -277,11 +282,13 @@ void TrainingWriteBuffers::addRow(
   const FinishedGameData& data,
   Rand& rand
 ) {
+  static_assert(NNModelVersion::latestInputsVersionImplemented == 5, "");
   if(inputsVersion < 3 || inputsVersion > 5)
     throw StringError("Training write buffers: Does not support input version: " + Global::intToString(inputsVersion));
 
-  int posArea = posLen*posLen;
-  assert(data.posLen == posLen);
+  int posArea = dataXLen*dataYLen;
+  assert(data.dataXLen == dataXLen);
+  assert(data.dataYLen == dataYLen);
   assert(data.hasFullData);
   assert(curRows < maxRows);
 
@@ -290,19 +297,19 @@ void TrainingWriteBuffers::addRow(
     float* rowBin = binaryInputNCHWUnpacked;
     float* rowGlobal = globalInputNC.data + curRows * numGlobalChannels;
     if(inputsVersion == 3) {
-      assert(NNInputs::NUM_FEATURES_BIN_V3 == numBinaryChannels);
+      assert(NNInputs::NUM_FEATURES_SPATIAL_V3 == numBinaryChannels);
       assert(NNInputs::NUM_FEATURES_GLOBAL_V3 == numGlobalChannels);
-      NNInputs::fillRowV3(board, hist, nextPlayer, data.drawEquivalentWinsForWhite, posLen, inputsUseNHWC, rowBin, rowGlobal);
+      NNInputs::fillRowV3(board, hist, nextPlayer, data.drawEquivalentWinsForWhite, dataXLen, dataYLen, inputsUseNHWC, rowBin, rowGlobal);
     }
     else if(inputsVersion == 4) {
-      assert(NNInputs::NUM_FEATURES_BIN_V4 == numBinaryChannels);
+      assert(NNInputs::NUM_FEATURES_SPATIAL_V4 == numBinaryChannels);
       assert(NNInputs::NUM_FEATURES_GLOBAL_V4 == numGlobalChannels);
-      NNInputs::fillRowV4(board, hist, nextPlayer, data.drawEquivalentWinsForWhite, posLen, inputsUseNHWC, rowBin, rowGlobal);
+      NNInputs::fillRowV4(board, hist, nextPlayer, data.drawEquivalentWinsForWhite, dataXLen, dataYLen, inputsUseNHWC, rowBin, rowGlobal);
     }
     else if(inputsVersion == 5) {
-      assert(NNInputs::NUM_FEATURES_BIN_V5 == numBinaryChannels);
+      assert(NNInputs::NUM_FEATURES_SPATIAL_V5 == numBinaryChannels);
       assert(NNInputs::NUM_FEATURES_GLOBAL_V5 == numGlobalChannels);
-      NNInputs::fillRowV5(board, hist, nextPlayer, data.drawEquivalentWinsForWhite, posLen, inputsUseNHWC, rowBin, rowGlobal);
+      NNInputs::fillRowV5(board, hist, nextPlayer, data.drawEquivalentWinsForWhite, dataXLen, dataYLen, inputsUseNHWC, rowBin, rowGlobal);
     }
     else
       ASSERT_UNREACHABLE;
@@ -320,11 +327,11 @@ void TrainingWriteBuffers::addRow(
   rowGlobal[25] = targetWeight;
 
   //Fill policy
-  int policySize = NNPos::getPolicySize(posLen);
+  int policySize = NNPos::getPolicySize(dataXLen,dataYLen);
   int16_t* rowPolicy = policyTargetsNCMove.data + curRows * POLICY_TARGET_NUM_CHANNELS * policySize;
 
   if(policyTarget0 != NULL) {
-    fillPolicyTarget(*policyTarget0, policySize, posLen, board.x_size, rowPolicy + 0 * policySize);
+    fillPolicyTarget(*policyTarget0, policySize, dataXLen, dataYLen, board.x_size, rowPolicy + 0 * policySize);
     rowGlobal[26] = 1.0f;
   }
   else {
@@ -333,12 +340,12 @@ void TrainingWriteBuffers::addRow(
   }
 
   if(policyTarget1 != NULL) {
-    fillPolicyTarget(*policyTarget1, policySize, posLen, board.x_size, rowPolicy + 1 * policySize);
-    rowGlobal[29] = 1.0f;
+    fillPolicyTarget(*policyTarget1, policySize, dataXLen, dataYLen, board.x_size, rowPolicy + 1 * policySize);
+    rowGlobal[28] = 1.0f;
   }
   else {
     uniformPolicyTarget(policySize, rowPolicy + 1 * policySize);
-    rowGlobal[29] = 0.0f;
+    rowGlobal[28] = 0.0f;
   }
 
   //Fill td-like value targets
@@ -350,24 +357,39 @@ void TrainingWriteBuffers::addRow(
   fillValueTDTargets(whiteValueTargets, whiteValueTargetsIdx, nextPlayer, 1.0, rowGlobal+16);
 
   //Fill short-term variance info
+  rowGlobal[21] = 0.0f;
+  rowGlobal[22] = 0.0f;
+  rowGlobal[23] = 0.0f;
+  rowGlobal[24] = 0.0f;
+  rowGlobal[29] = 0.0f;
+  rowGlobal[30] = 0.0f;
+  rowGlobal[31] = 0.0f;
+  rowGlobal[32] = 0.0f;
   const ValueTargets& thisTargets = whiteValueTargets[whiteValueTargetsIdx];
   if(thisTargets.hasMctsUtility) {
-    rowGlobal[28] = 1.0f;
-    rowGlobal[21] = fsq(thisTargets.mctsUtility4 - thisTargets.mctsUtility1);
-    rowGlobal[22] = fsq(thisTargets.mctsUtility16 - thisTargets.mctsUtility4);
-    rowGlobal[23] = fsq(thisTargets.mctsUtility64 - thisTargets.mctsUtility16);
-    rowGlobal[24] = fsq(thisTargets.mctsUtility256 - thisTargets.mctsUtility64);
-  }
-  else {
-    rowGlobal[28] = 0.0f;
-    rowGlobal[21] = 0.0f;
-    rowGlobal[22] = 0.0f;
-    rowGlobal[23] = 0.0f;
-    rowGlobal[24] = 0.0f;
+    assert(!std::isnan(thisTargets.mctsUtility1));
+    if(!std::isnan(thisTargets.mctsUtility4)) {
+      rowGlobal[21] = fsq(thisTargets.mctsUtility4 - thisTargets.mctsUtility1);
+      rowGlobal[29] = 1.0f;
+      if(!std::isnan(thisTargets.mctsUtility16)) {
+        rowGlobal[22] = fsq(thisTargets.mctsUtility16 - thisTargets.mctsUtility4);
+        rowGlobal[30] = 1.0f;
+        if(!std::isnan(thisTargets.mctsUtility64)) {
+          rowGlobal[23] = fsq(thisTargets.mctsUtility64 - thisTargets.mctsUtility16);
+          rowGlobal[31] = 1.0f;
+          if(!std::isnan(thisTargets.mctsUtility256)) {
+            rowGlobal[24] = fsq(thisTargets.mctsUtility256 - thisTargets.mctsUtility64);
+            rowGlobal[32] = 1.0f;
+          }
+        }
+      }
+    }
   }
 
   //Unused
-  rowGlobal[30] = 0.0f;
+  rowGlobal[33] = 0.0f;
+  rowGlobal[34] = 0.0f;
+  rowGlobal[35] = 0.0f;
 
   //Fill in whether we should use history or not
   bool useHist0 = rand.nextDouble() < 0.98;
@@ -375,48 +397,53 @@ void TrainingWriteBuffers::addRow(
   bool useHist2 = useHist1 && rand.nextDouble() < 0.98;
   bool useHist3 = useHist2 && rand.nextDouble() < 0.98;
   bool useHist4 = useHist3 && rand.nextDouble() < 0.98;
-  rowGlobal[31] = useHist0 ? 1.0f : 0.0f;
-  rowGlobal[32] = useHist1 ? 1.0f : 0.0f;
-  rowGlobal[33] = useHist2 ? 1.0f : 0.0f;
-  rowGlobal[34] = useHist3 ? 1.0f : 0.0f;
-  rowGlobal[35] = useHist4 ? 1.0f : 0.0f;
+  rowGlobal[36] = useHist0 ? 1.0f : 0.0f;
+  rowGlobal[37] = useHist1 ? 1.0f : 0.0f;
+  rowGlobal[38] = useHist2 ? 1.0f : 0.0f;
+  rowGlobal[39] = useHist3 ? 1.0f : 0.0f;
+  rowGlobal[40] = useHist4 ? 1.0f : 0.0f;
 
   //Fill in hash of game
   Hash128 gameHash = data.gameHash;
-  rowGlobal[36] = (float)(gameHash.hash0 & 0x3FFFFF);
-  rowGlobal[37] = (float)((gameHash.hash0 >> 22) & 0x3FFFFF);
-  rowGlobal[38] = (float)((gameHash.hash0 >> 44) & 0xFFFFF);
-  rowGlobal[39] = (float)(gameHash.hash1 & 0x3FFFFF);
-  rowGlobal[40] = (float)((gameHash.hash1 >> 22) & 0x3FFFFF);
-  rowGlobal[41] = (float)((gameHash.hash1 >> 44) & 0xFFFFF);
+  rowGlobal[41] = (float)(gameHash.hash0 & 0x3FFFFF);
+  rowGlobal[42] = (float)((gameHash.hash0 >> 22) & 0x3FFFFF);
+  rowGlobal[43] = (float)((gameHash.hash0 >> 44) & 0xFFFFF);
+  rowGlobal[44] = (float)(gameHash.hash1 & 0x3FFFFF);
+  rowGlobal[45] = (float)((gameHash.hash1 >> 22) & 0x3FFFFF);
+  rowGlobal[46] = (float)((gameHash.hash1 >> 44) & 0xFFFFF);
 
   //Various other data
-  rowGlobal[42] = hist.currentSelfKomi(nextPlayer,data.drawEquivalentWinsForWhite);
-  rowGlobal[43] = (hist.encorePhase == 2 || hist.rules.scoringRule == Rules::SCORING_AREA) ? 1.0f : 0.0f;
+  rowGlobal[47] = hist.currentSelfKomi(nextPlayer,data.drawEquivalentWinsForWhite);
+  rowGlobal[48] = (hist.encorePhase == 2 || hist.rules.scoringRule == Rules::SCORING_AREA) ? 1.0f : 0.0f;
 
   //Earlier neural net metadata
-  rowGlobal[44] = data.changedNeuralNets.size() > 0 ? 1.0f : 0.0f;
-  rowGlobal[45] = (float)numNeuralNetsBehindLatest;
+  rowGlobal[49] = data.changedNeuralNets.size() > 0 ? 1.0f : 0.0f;
+  rowGlobal[50] = (float)numNeuralNetsBehindLatest;
 
   //Some misc metadata
-  rowGlobal[46] = absoluteTurnNumber;
-  rowGlobal[47] = data.hitTurnLimit ? 1.0f : 0.0f;
-  rowGlobal[48] = data.startHist.moveHistory.size();
-  rowGlobal[49] = data.numExtraBlack;
+  rowGlobal[51] = absoluteTurnNumber;
+  rowGlobal[52] = data.hitTurnLimit ? 1.0f : 0.0f;
+  rowGlobal[53] = data.startHist.moveHistory.size();
+  rowGlobal[54] = data.numExtraBlack;
 
   //Metadata about how the game was initialized
-  rowGlobal[50] = data.mode;
-  rowGlobal[51] = data.modeMeta1;
-  rowGlobal[52] = data.modeMeta2;
-  rowGlobal[53] = isSidePosition ? 1.0f : 0.0f;
+  rowGlobal[55] = data.mode;
+  rowGlobal[56] = data.modeMeta1;
+  rowGlobal[57] = data.modeMeta2;
+  rowGlobal[58] = isSidePosition ? 1.0f : 0.0f;
 
   //Unused
-  rowGlobal[54] = 0.0f;
+  rowGlobal[59] = 0.0f;
 
   //Original number of visits
-  rowGlobal[55] = (float)unreducedNumVisits;
+  rowGlobal[60] = (float)unreducedNumVisits;
 
-  assert(56 == GLOBAL_TARGET_NUM_CHANNELS);
+  //Unused
+  rowGlobal[61] = 0.0f;
+  rowGlobal[62] = 0.0f;
+  rowGlobal[63] = 0.0f;
+
+  assert(64 == GLOBAL_TARGET_NUM_CHANNELS);
 
   int scoreDistrLen = posArea*2 + NNPos::EXTRA_SCORE_DISTR_RADIUS*2;
   int scoreDistrMid = posArea + NNPos::EXTRA_SCORE_DISTR_RADIUS;
@@ -602,14 +629,14 @@ void TrainingWriteBuffers::writeToTextOstream(ostream& out) {
 
 //-------------------------------------------------------------------------------------
 
-TrainingDataWriter::TrainingDataWriter(const string& outDir, int iVersion, int maxRowsPerFile, double firstFileMinRandProp, int posLen, const string& randSeed)
-  : TrainingDataWriter(outDir,NULL,iVersion,maxRowsPerFile,firstFileMinRandProp,posLen,1,randSeed)
+TrainingDataWriter::TrainingDataWriter(const string& outDir, int iVersion, int maxRowsPerFile, double firstFileMinRandProp, int dataXLen, int dataYLen, const string& randSeed)
+  : TrainingDataWriter(outDir,NULL,iVersion,maxRowsPerFile,firstFileMinRandProp,dataXLen,dataYLen,1,randSeed)
 {}
-TrainingDataWriter::TrainingDataWriter(ostream* dbgOut, int iVersion, int maxRowsPerFile, double firstFileMinRandProp, int posLen, int onlyEvery, const string& randSeed)
-  : TrainingDataWriter(string(),dbgOut,iVersion,maxRowsPerFile,firstFileMinRandProp,posLen,onlyEvery,randSeed)
+TrainingDataWriter::TrainingDataWriter(ostream* dbgOut, int iVersion, int maxRowsPerFile, double firstFileMinRandProp, int dataXLen, int dataYLen, int onlyEvery, const string& randSeed)
+  : TrainingDataWriter(string(),dbgOut,iVersion,maxRowsPerFile,firstFileMinRandProp,dataXLen,dataYLen,onlyEvery,randSeed)
 {}
 
-TrainingDataWriter::TrainingDataWriter(const string& outDir, ostream* dbgOut, int iVersion, int maxRowsPerFile, double firstFileMinRandProp, int posLen, int onlyEvery, const string& randSeed)
+TrainingDataWriter::TrainingDataWriter(const string& outDir, ostream* dbgOut, int iVersion, int maxRowsPerFile, double firstFileMinRandProp, int dataXLen, int dataYLen, int onlyEvery, const string& randSeed)
   :outputDir(outDir),inputsVersion(iVersion),rand(randSeed),writeBuffers(NULL),debugOut(dbgOut),debugOnlyWriteEvery(onlyEvery),rowCount(0)
 {
   int numBinaryChannels;
@@ -617,22 +644,22 @@ TrainingDataWriter::TrainingDataWriter(const string& outDir, ostream* dbgOut, in
   //Note that this inputsVersion is for data writing, it might be different than the inputsVersion used
   //to feed into a model during selfplay
   if(inputsVersion == 3) {
-    numBinaryChannels = NNInputs::NUM_FEATURES_BIN_V3;
+    numBinaryChannels = NNInputs::NUM_FEATURES_SPATIAL_V3;
     numGlobalChannels = NNInputs::NUM_FEATURES_GLOBAL_V3;
   }
   else if(inputsVersion == 4) {
-    numBinaryChannels = NNInputs::NUM_FEATURES_BIN_V4;
+    numBinaryChannels = NNInputs::NUM_FEATURES_SPATIAL_V4;
     numGlobalChannels = NNInputs::NUM_FEATURES_GLOBAL_V4;
   }
   else if(inputsVersion == 5) {
-    numBinaryChannels = NNInputs::NUM_FEATURES_BIN_V5;
+    numBinaryChannels = NNInputs::NUM_FEATURES_SPATIAL_V5;
     numGlobalChannels = NNInputs::NUM_FEATURES_GLOBAL_V5;
   }
   else {
     throw StringError("TrainingDataWriter: Unsupported inputs version: " + Global::intToString(inputsVersion));
   }
 
-  writeBuffers = new TrainingWriteBuffers(inputsVersion, maxRowsPerFile, numBinaryChannels, numGlobalChannels, posLen);
+  writeBuffers = new TrainingWriteBuffers(inputsVersion, maxRowsPerFile, numBinaryChannels, numGlobalChannels, dataXLen, dataYLen);
 
   if(firstFileMinRandProp < 0 || firstFileMinRandProp > 1)
     throw StringError("TrainingDataWriter: firstFileMinRandProp not in [0,1]: " + Global::doubleToString(firstFileMinRandProp));
@@ -724,12 +751,13 @@ void TrainingDataWriter::writeGame(const FinishedGameData& data) {
       }
     }
 
-    if(targetWeight != 0.0) {
+    assert(targetWeight >= 0.0 && targetWeight <= 1.0);
+    if(targetWeight != 0.0 && (targetWeight >= 1.0 || rand.nextBool(targetWeight))) {
       if(debugOut == NULL || rowCount % debugOnlyWriteEvery == 0) {
         writeBuffers->addRow(
           board,hist,nextPlayer,
           absoluteTurnNumber,
-          targetWeight,
+          1.0,
           unreducedNumVisits,
           policyTarget0,
           policyTarget1,
@@ -760,6 +788,9 @@ void TrainingDataWriter::writeGame(const FinishedGameData& data) {
 
     if(sp->targetWeight == 0.0)
       continue;
+    assert(sp->targetWeight >= 0.0 && sp->targetWeight <= 1.0);
+    if(sp->targetWeight < 1.0 && !rand.nextBool(sp->targetWeight))
+      continue;
 
     int absoluteTurnNumber = sp->hist.moveHistory.size();
     assert(absoluteTurnNumber >= data.startHist.moveHistory.size());
@@ -770,7 +801,7 @@ void TrainingDataWriter::writeGame(const FinishedGameData& data) {
       writeBuffers->addRow(
         sp->board,sp->hist,sp->pla,
         absoluteTurnNumber,
-        sp->targetWeight,
+        1.0,
         sp->unreducedNumVisits,
         &(sp->policyTarget),
         NULL,
@@ -789,5 +820,3 @@ void TrainingDataWriter::writeGame(const FinishedGameData& data) {
   }
 
 }
-
-

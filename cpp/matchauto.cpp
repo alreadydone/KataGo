@@ -7,7 +7,6 @@
 #include "search/asyncbot.h"
 #include "program/setup.h"
 #include "program/play.h"
-#include "program/gitinfo.h"
 #include "main.h"
 
 using namespace std;
@@ -68,7 +67,7 @@ namespace {
     ConfigParser* cfg;
     Rand seedRand;
     int maxConcurrentEvals;
-    
+
     map<string, NetAndStuff*> loadedNets;
 
     std::mutex managerLock;
@@ -94,11 +93,12 @@ namespace {
 
     void preregisterGames(const string& nnModelFile, Logger& logger, int n) {
       std::lock_guard<std::mutex> lock(managerLock);
-      
+
       auto iter = loadedNets.find(nnModelFile);
       NetAndStuff* netAndStuff;
       if(iter == loadedNets.end()) {
-        vector<NNEvaluator*> nnEvals = Setup::initializeNNEvaluators({nnModelFile},{nnModelFile},*cfg,logger,seedRand,maxConcurrentEvals,false,false,NNPos::MAX_BOARD_LEN);
+        vector<NNEvaluator*> nnEvals =
+          Setup::initializeNNEvaluators({nnModelFile},{nnModelFile},*cfg,logger,seedRand,maxConcurrentEvals,false,false,NNPos::MAX_BOARD_LEN,NNPos::MAX_BOARD_LEN,-1);
         assert(nnEvals.size() == 1);
         netAndStuff = new NetAndStuff(nnEvals[0]);
         loadedNets[nnModelFile] = netAndStuff;
@@ -137,15 +137,15 @@ namespace {
         delete netAndStuff;
       }
     }
-    
+
   };
 
 
   STRUCT_NAMED_TRIPLE(int,forBot,int,b0,int,b1,NextMatchup);
-  
+
   struct AutoMatchPairer {
     string resultsDir;
-    
+
     int numBots;
     vector<string> botNames;
     vector<string> nnModelFiles;
@@ -161,7 +161,7 @@ namespace {
     int64_t logGamesEvery;
 
     std::mutex getMatchupMutex;
-    
+
     AutoMatchPairer(
       ConfigParser& cfg,
       const string& resDir,
@@ -188,14 +188,14 @@ namespace {
       assert(baseParamss.size() == numBots);
       numGamesTotal = cfg.getInt64("numGamesTotal",1,((int64_t)1) << 62);
       logGamesEvery = cfg.getInt64("logGamesEvery",1,1000000);
-      
+
       if(cfg.contains("matchRepFactor"))
         matchRepFactor = cfg.getInt("matchRepFactor",1,100000);
     }
 
     ~AutoMatchPairer()
     {}
-  
+
     bool getMatchup(
       NetManager* manager, int64_t& gameIdx, string& forBot, MatchPairer::BotSpec& botSpecB, MatchPairer::BotSpec& botSpecW, Logger& logger
     )
@@ -209,7 +209,7 @@ namespace {
 
       NextMatchup matchup = getMatchupPairUnsynchronized(manager,logger);
       forBot = botNames[matchup.forBot];
-        
+
       botSpecB.botIdx = matchup.b0;
       botSpecB.botName = botNames[matchup.b0];
       botSpecB.nnEval = manager->registerStarting(nnModelFiles[matchup.b0]);
@@ -230,14 +230,14 @@ namespace {
       for(int b0 = 0; b0<numBots; b0++) {
         idxOfBotName[botNames[b0]] = b0;
       }
-          
+
       int64_t* numGamesForBot = new int64_t[numBots];
       int64_t* numGamesByBot = new int64_t[numBots];
       for(int b0 = 0; b0<numBots; b0++) {
         numGamesForBot[b0] = 0;
         numGamesByBot[b0] = 0;
       }
-          
+
       ComputeElos::WLRecord* winMatrix = new ComputeElos::WLRecord[numBots*numBots];
       for(int b0 = 0; b0<numBots; b0++) {
         for(int b1 = 0; b1<numBots; b1++) {
@@ -284,11 +284,11 @@ namespace {
           }
         }
       }
-        
+
       double priorWL = 0.01;
       int maxIters = 20000;
       double tolerance = 0.000001;
-        
+
       vector<double> elos = ComputeElos::computeElos(winMatrix,numBots,priorWL,maxIters,tolerance,NULL);
       vector<double> eloStdevs = ComputeElos::computeApproxEloStdevs(elos,winMatrix,numBots,priorWL);
 
@@ -308,7 +308,7 @@ namespace {
         int r = rand.nextUInt(i+1);
         std::swap(botIdxsShuffled[r],botIdxsShuffled[i]);
       }
-      
+
       //Several times in a row, find the bot with the least games played, and chooose a random other bot with probability proportional
       //to the variance of the game result based on a random sample of the predicted elo difference
       //We use the average of games "for" this bot in conjunction with games played
@@ -353,7 +353,7 @@ namespace {
 
         logger.write("Scheduling game " + botNames[bestBot] + " vs " + botNames[otherBot] + "elos " +
                      Global::doubleToString(elos[bestBot]) + " " + Global::doubleToString(elos[otherBot]));
-        
+
         //And schedule the games!
         manager->preregisterGames(nnModelFiles[bestBot],logger,matchRepFactor);
         manager->preregisterGames(nnModelFiles[otherBot],logger,matchRepFactor);
@@ -361,7 +361,7 @@ namespace {
         numGamesForBot[bestBot] += matchRepFactor;
         numGamesByBot[bestBot] += matchRepFactor;
         numGamesByBot[otherBot] += matchRepFactor;
- 
+
         for(int j = 0; j < matchRepFactor; j++) {
           if(rand.nextBool(0.5))
             nextMatchups.push_back(NextMatchup(bestBot,bestBot,otherBot));
@@ -374,22 +374,22 @@ namespace {
       delete[] numGamesForBot;
       delete[] numGamesByBot;
     }
-      
+
     NextMatchup getMatchupPairUnsynchronized(NetManager* manager, Logger& logger) {
       if(nextMatchups.size() <= 0) {
         generateNewMatchups(manager,logger);
       }
       assert(nextMatchups.size() > 0);
-    
+
       NextMatchup matchup = nextMatchups.back();
       nextMatchups.pop_back();
       return matchup;
     }
   };
-  
+
 }
 
-    
+
 int MainCmds::matchauto(int argc, const char* const* argv) {
   Board::initHash();
   ScoreValue::initTables();
@@ -400,7 +400,7 @@ int MainCmds::matchauto(int argc, const char* const* argv) {
   string sgfOutputDir;
   string resultsDir;
   try {
-    TCLAP::CmdLine cmd("Play different nets against each other with different search settings", ' ', "1.0",true);
+    TCLAP::CmdLine cmd("Play different nets against each other with different search settings", ' ', Version::getKataGoVersionForHelp(),true);
     TCLAP::ValueArg<string> configFileArg("","config-file","Config file to use (see configs/match_example.cfg)",true,string(),"FILE");
     TCLAP::ValueArg<string> logFileArg("","log-file","Log file to output to",true,string(),"FILE");
     TCLAP::ValueArg<string> sgfOutputDirArg("","sgf-output-dir","Dir to output sgf files",false,string(),"DIR");
@@ -427,7 +427,7 @@ int MainCmds::matchauto(int argc, const char* const* argv) {
   logger.setLogToStdout(logToStdout);
 
   logger.write("Auto Match Engine starting...");
-//  logger.write(string("Git revision: ") + GIT_REVISION);
+  logger.write(string("Git revision: ") + Version::getGitRevision());
 
   //Load per-bot search config, first, which also tells us how many bots we're running
   vector<SearchParams> paramss = Setup::loadParams(cfg);
@@ -518,7 +518,7 @@ int MainCmds::matchauto(int argc, const char* const* argv) {
       if(sigReceived.load())
         break;
 
-      int dataPosLen = 19; //Doesn't matter, we don't actually write training data
+      int dataBoardLen = 19; //Doesn't matter, we don't actually write training data
       FinishedGameData* gameData = NULL;
 
       int64_t gameIdx;
@@ -528,7 +528,7 @@ int MainCmds::matchauto(int argc, const char* const* argv) {
       if(autoMatchPairer->getMatchup(manager, gameIdx, forBot, botSpecB, botSpecW, logger)) {
         gameData = gameRunner->runGame(
           gameIdx, botSpecB, botSpecW, NULL, NULL, logger,
-          dataPosLen, stopConditions, NULL
+          dataBoardLen, dataBoardLen, stopConditions, NULL
         );
       }
 
@@ -555,7 +555,7 @@ int MainCmds::matchauto(int argc, const char* const* argv) {
           std::lock_guard<std::mutex> lock(resultLock);
           (*resultOut) << out.str() << endl;
         }
-        
+
         delete gameData;
       }
 
@@ -583,10 +583,10 @@ int MainCmds::matchauto(int argc, const char* const* argv) {
   delete manager;
 
   NeuralNet::globalCleanup();
+  ScoreValue::freeTables();
 
   if(sigReceived.load())
     logger.write("Exited cleanly after signal");
   logger.write("All cleaned up, quitting");
   return 0;
 }
-

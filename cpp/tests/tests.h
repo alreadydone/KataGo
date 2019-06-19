@@ -2,6 +2,7 @@
 #define TESTS_H
 
 #include <sstream>
+
 #include "../core/global.h"
 #include "../core/rand.h"
 #include "../core/test.h"
@@ -25,21 +26,27 @@ namespace Tests {
   //testscore.cpp
   void runScoreTests();
 
+  //testsgf.cpp
+  void runSgfTests();
+
   //testnninputs.cpp
-  void runNNInputsV2Tests();
   void runNNInputsV3V4Tests();
 
   //testsearch.cpp
   void runNNLessSearchTests();
-  void runSearchTests(const string& modelFile, bool inputsNHWC, bool cudaNHWC, int symmetry, bool useFP16);
-  void runSearchTestsV3(const string& modelFile, bool inputsNHWC, bool cudaNHWC, int symmetry, bool useFP16);
+  void runSearchTests(const std::string& modelFile, bool inputsNHWC, bool cudaNHWC, int symmetry, bool useFP16);
+  void runSearchTestsV3(const std::string& modelFile, bool inputsNHWC, bool cudaNHWC, int symmetry, bool useFP16);
+  void runNNOnTinyBoard(const std::string& modelFile, bool inputsNHWC, bool cudaNHWC, int symmetry, bool useFP16);
 
   //testtime.cpp
   void runTimeControlsTests();
-  
+
   //testtrainingwrite.cpp
   void runTrainingWriteTests();
-  void runSelfplayInitTestsWithNN(const string& modelFile);
+  void runSelfplayInitTestsWithNN(const std::string& modelFile);
+
+  //testnn.cpp
+  void runNNLayerTests();
 }
 
 namespace TestCommon {

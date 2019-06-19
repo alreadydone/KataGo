@@ -1,19 +1,15 @@
 #include "../program/setup.h"
+
 #include "../neuralnet/nninterface.h"
 
+using namespace std;
+
 void Setup::initializeSession(ConfigParser& cfg) {
-
-  string tensorflowGpuVisibleDeviceList;
-  if(cfg.contains("tensorflowGpuVisibleDeviceList"))
-    tensorflowGpuVisibleDeviceList = cfg.getString("tensorflowGpuVisibleDeviceList");
-
-  double tensorflowPerProcessGpuMemoryFraction = -1;
-  if(cfg.contains("tensorflowPerProcessGpuMemoryFraction"))
-    tensorflowPerProcessGpuMemoryFraction = cfg.getDouble("tensorflowPerProcessGpuMemoryFraction",0.0,1.0);
-
-  NeuralNet::globalInitialize(tensorflowGpuVisibleDeviceList,tensorflowPerProcessGpuMemoryFraction);
+  (void)cfg;
+  NeuralNet::globalInitialize();
 }
 
+//TODO allow the same config to specify differing cuda and opencl options
 vector<NNEvaluator*> Setup::initializeNNEvaluators(
   const vector<string>& nnModelNames,
   const vector<string>& nnModelFiles,
@@ -23,7 +19,9 @@ vector<NNEvaluator*> Setup::initializeNNEvaluators(
   int maxConcurrentEvals,
   bool debugSkipNeuralNetDefault,
   bool alwaysIncludeOwnerMap,
-  int defaultPosLen
+  int defaultNNXLen,
+  int defaultNNYLen,
+  int forcedSymmetry
 ) {
   vector<NNEvaluator*> nnEvals;
   assert(nnModelNames.size() == nnModelFiles.size());
@@ -35,17 +33,31 @@ vector<NNEvaluator*> Setup::initializeNNEvaluators(
     bool debugSkipNeuralNet = cfg.contains("debugSkipNeuralNet") ? cfg.getBool("debugSkipNeuralNet") : debugSkipNeuralNetDefault;
     int modelFileIdx = i;
 
-    int posLen = std::max(defaultPosLen,8);
-    if(cfg.contains("maxBoardSizeForNNBuffer" + idxStr))
-      posLen = cfg.getInt("maxBoardSizeForNNBuffer" + idxStr, 7, NNPos::MAX_BOARD_LEN);
+    int nnXLen = std::max(defaultNNXLen,7);
+    int nnYLen = std::max(defaultNNYLen,7);
+    if(cfg.contains("maxBoardXSizeForNNBuffer" + idxStr))
+      nnXLen = cfg.getInt("maxBoardXSizeForNNBuffer" + idxStr, 7, NNPos::MAX_BOARD_LEN);
+    else if(cfg.contains("maxBoardXSizeForNNBuffer"))
+      nnXLen = cfg.getInt("maxBoardXSizeForNNBuffer", 7, NNPos::MAX_BOARD_LEN);
+    else if(cfg.contains("maxBoardSizeForNNBuffer" + idxStr))
+      nnXLen = cfg.getInt("maxBoardSizeForNNBuffer" + idxStr, 7, NNPos::MAX_BOARD_LEN);
     else if(cfg.contains("maxBoardSizeForNNBuffer"))
-      posLen = cfg.getInt("maxBoardSizeForNNBuffer", 7, NNPos::MAX_BOARD_LEN);
+      nnXLen = cfg.getInt("maxBoardSizeForNNBuffer", 7, NNPos::MAX_BOARD_LEN);
 
-    bool requireExactPosLen = false;
+    if(cfg.contains("maxBoardYSizeForNNBuffer" + idxStr))
+      nnYLen = cfg.getInt("maxBoardYSizeForNNBuffer" + idxStr, 7, NNPos::MAX_BOARD_LEN);
+    else if(cfg.contains("maxBoardYSizeForNNBuffer"))
+      nnYLen = cfg.getInt("maxBoardYSizeForNNBuffer", 7, NNPos::MAX_BOARD_LEN);
+    else if(cfg.contains("maxBoardSizeForNNBuffer" + idxStr))
+      nnYLen = cfg.getInt("maxBoardSizeForNNBuffer" + idxStr, 7, NNPos::MAX_BOARD_LEN);
+    else if(cfg.contains("maxBoardSizeForNNBuffer"))
+      nnYLen = cfg.getInt("maxBoardSizeForNNBuffer", 7, NNPos::MAX_BOARD_LEN);
+
+    bool requireExactNNLen = false;
     if(cfg.contains("requireMaxBoardSize" + idxStr))
-      requireExactPosLen = cfg.getBool("requireMaxBoardSize" + idxStr);
+      requireExactNNLen = cfg.getBool("requireMaxBoardSize" + idxStr);
     else if(cfg.contains("requireMaxBoardSize"))
-      requireExactPosLen = cfg.getBool("requireMaxBoardSize");
+      requireExactNNLen = cfg.getBool("requireMaxBoardSize");
 
     bool inputsUseNHWC = true;
     if(cfg.contains("inputsUseNHWC"+idxStr))
@@ -59,22 +71,6 @@ vector<NNEvaluator*> Setup::initializeNNEvaluators(
     else if(cfg.contains("nnPolicyTemperature"))
       nnPolicyTemperature = cfg.getFloat("nnPolicyTemperature",0.01f,5.0f);
 
-    NNEvaluator* nnEval = new NNEvaluator(
-      nnModelName,
-      nnModelFile,
-      modelFileIdx,
-      cfg.getInt("nnMaxBatchSize", 1, 65536),
-      maxConcurrentEvals,
-      posLen,
-      requireExactPosLen,
-      inputsUseNHWC,
-      cfg.getInt("nnCacheSizePowerOfTwo", -1, 48),
-      cfg.getInt("nnMutexPoolSizePowerOfTwo", -1, 24),
-      debugSkipNeuralNet,
-      alwaysIncludeOwnerMap,
-      nnPolicyTemperature
-    );
-
     bool nnRandomize = cfg.getBool("nnRandomize");
     string nnRandSeed;
     if(cfg.contains("nnRandSeed" + idxStr))
@@ -85,27 +81,46 @@ vector<NNEvaluator*> Setup::initializeNNEvaluators(
       nnRandSeed = Global::uint64ToString(seedRand.nextUInt64());
     logger.write("nnRandSeed" + idxStr + " = " + nnRandSeed);
 
+    //Parse cuda versions of the various cfg arguments below
+    //as a way to support legacy configs. They are equivalent to non-cuda versions of those args.
+
     int numNNServerThreadsPerModel = cfg.getInt("numNNServerThreadsPerModel",1,1024);
-    vector<int> cudaGpuIdxByServerThread;
+    vector<int> gpuIdxByServerThread;
     for(int j = 0; j<numNNServerThreadsPerModel; j++) {
       string threadIdxStr = Global::intToString(j);
-      if(cfg.contains("cudaGpuToUseModel"+idxStr+"Thread"+threadIdxStr))
-        cudaGpuIdxByServerThread.push_back(cfg.getInt("cudaGpuToUseModel"+idxStr+"Thread"+threadIdxStr,0,1023));
+      if(cfg.contains("gpuToUseModel"+idxStr+"Thread"+threadIdxStr))
+        gpuIdxByServerThread.push_back(cfg.getInt("gpuToUseModel"+idxStr+"Thread"+threadIdxStr,0,1023));
+      else if(cfg.contains("cudaGpuToUseModel"+idxStr+"Thread"+threadIdxStr))
+        gpuIdxByServerThread.push_back(cfg.getInt("cudaGpuToUseModel"+idxStr+"Thread"+threadIdxStr,0,1023));
+      else if(cfg.contains("gpuToUseModel"+idxStr))
+        gpuIdxByServerThread.push_back(cfg.getInt("gpuToUseModel"+idxStr,0,1023));
       else if(cfg.contains("cudaGpuToUseModel"+idxStr))
-        cudaGpuIdxByServerThread.push_back(cfg.getInt("cudaGpuToUseModel"+idxStr,0,1023));
+        gpuIdxByServerThread.push_back(cfg.getInt("cudaGpuToUseModel"+idxStr,0,1023));
+      else if(cfg.contains("gpuToUseThread"+threadIdxStr))
+        gpuIdxByServerThread.push_back(cfg.getInt("gpuToUseThread"+threadIdxStr,0,1023));
       else if(cfg.contains("cudaGpuToUseThread"+threadIdxStr))
-        cudaGpuIdxByServerThread.push_back(cfg.getInt("cudaGpuToUseThread"+threadIdxStr,0,1023));
+        gpuIdxByServerThread.push_back(cfg.getInt("cudaGpuToUseThread"+threadIdxStr,0,1023));
+      else if(cfg.contains("gpuToUse"))
+        gpuIdxByServerThread.push_back(cfg.getInt("gpuToUse",0,1023));
       else if(cfg.contains("cudaGpuToUse"))
-        cudaGpuIdxByServerThread.push_back(cfg.getInt("cudaGpuToUse",0,1023));
+        gpuIdxByServerThread.push_back(cfg.getInt("cudaGpuToUse",0,1023));
       else
-        cudaGpuIdxByServerThread.push_back(0);
+        gpuIdxByServerThread.push_back(0);
     }
 
-    bool cudaUseFP16 = false;
-    if(cfg.contains("cudaUseFP16-"+idxStr))
-      cudaUseFP16 = cfg.getBool("cudaUseFP16-"+idxStr);
+    vector<int> gpuIdxs = gpuIdxByServerThread;
+    std::sort(gpuIdxs.begin(), gpuIdxs.end());
+    std::unique(gpuIdxs.begin(), gpuIdxs.end());
+
+    bool useFP16 = false;
+    if(cfg.contains("useFP16-"+idxStr))
+      useFP16 = cfg.getBool("useFP16-"+idxStr);
+    else if(cfg.contains("cudaUseFP16-"+idxStr))
+      useFP16 = cfg.getBool("cudaUseFP16-"+idxStr);
+    else if(cfg.contains("useFP16"))
+      useFP16 = cfg.getBool("useFP16");
     else if(cfg.contains("cudaUseFP16"))
-      cudaUseFP16 = cfg.getBool("cudaUseFP16");
+      useFP16 = cfg.getBool("cudaUseFP16");
 
     bool cudaUseNHWC = false;
     if(cfg.contains("cudaUseNHWC"+idxStr))
@@ -115,19 +130,38 @@ vector<NNEvaluator*> Setup::initializeNNEvaluators(
 
     logger.write(
       "After dedups: nnModelFile" + idxStr + " = " + nnModelFile
-      + " useFP16 " + Global::boolToString(cudaUseFP16)
-      + " useNHWC " + Global::boolToString(cudaUseNHWC)
+      + " useFP16 " + Global::boolToString(useFP16)
+      + " cudaUseNHWC " + Global::boolToString(cudaUseNHWC)
     );
 
-    int defaultSymmetry = 0;
+    NNEvaluator* nnEval = new NNEvaluator(
+      nnModelName,
+      nnModelFile,
+      gpuIdxs,
+      &logger,
+      modelFileIdx,
+      cfg.getInt("nnMaxBatchSize", 1, 65536),
+      maxConcurrentEvals,
+      nnXLen,
+      nnYLen,
+      requireExactNNLen,
+      inputsUseNHWC,
+      cfg.getInt("nnCacheSizePowerOfTwo", -1, 48),
+      cfg.getInt("nnMutexPoolSizePowerOfTwo", -1, 24),
+      debugSkipNeuralNet,
+      alwaysIncludeOwnerMap,
+      nnPolicyTemperature
+    );
+
+    int defaultSymmetry = forcedSymmetry >= 0 ? forcedSymmetry : 0;
     nnEval->spawnServerThreads(
       numNNServerThreadsPerModel,
-      nnRandomize,
+      (forcedSymmetry >= 0 ? false : nnRandomize),
       nnRandSeed,
       defaultSymmetry,
       logger,
-      cudaGpuIdxByServerThread,
-      cudaUseFP16,
+      gpuIdxByServerThread,
+      useFP16,
       cudaUseNHWC
     );
 
@@ -278,4 +312,22 @@ vector<SearchParams> Setup::loadParams(
   }
 
   return paramss;
+}
+
+Player Setup::parseReportAnalysisWinrates(
+  ConfigParser& cfg, Player defaultPerspective
+) {
+  if(!cfg.contains("reportAnalysisWinratesAs"))
+    return defaultPerspective;
+
+  string sOrig = cfg.getString("reportAnalysisWinratesAs");
+  string s = Global::toLower(sOrig);
+  if(s == "b" || s == "black")
+    return P_BLACK;
+  else if(s == "w" || s == "white")
+    return P_WHITE;
+  else if(s == "sidetomove")
+    return C_EMPTY;
+
+  throw StringError("Could not parse config value for reportAnalysisWinratesAs: " + sOrig);
 }

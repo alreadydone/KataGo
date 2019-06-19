@@ -62,7 +62,7 @@ class Model:
     self.ownership_target_shape = [self.pos_len,self.pos_len]
     self.target_weight_shape = []
     self.ownership_target_weight_shape = []
-    self.utilityvar_target_weight_shape = []
+    self.utilityvar_target_weight_shape = [4]
 
     self.pass_pos = self.pos_len * self.pos_len
 
@@ -110,7 +110,7 @@ class Model:
     x = pos % pos_len
     y = pos // pos_len
     if x < 0 or x >= bsize or y < 0 or y >= bsize:
-      return board.loc(-1,-1) #Return an illegal move since this is offboard
+      return board.loc(-10,-10) #Return an illegal move since this is offboard
     return board.loc(x,y)
 
   def sym_tensor_pos(self,pos,symmetry):
@@ -315,7 +315,12 @@ class Model:
 
     #Not quite right, japanese rules aren't really implemented in the python
     bArea = board.size * board.size
-    selfKomi = rules["selfKomi"]
+    whiteKomi = rules["whiteKomi"]
+    if rules["scoringRule"] == "SCORING_TERRITORY":
+      selfKomi = (whiteKomi if pla == Board.WHITE else -whiteKomi+1)
+    else:
+      selfKomi = (whiteKomi if pla == Board.WHITE else -whiteKomi)
+
     if selfKomi > bArea+1:
       selfKomi = bArea+1
     if selfKomi < -bArea-1:
@@ -1217,9 +1222,9 @@ class Target_vars:
     self.policy_target_weight1 = (placeholders["policy_target_weight1"] if "policy_target_weight1" in placeholders else
                                  tf.placeholder(tf.float32, [None] + model.policy_target_weight_shape))
     self.ownership_target_weight = (placeholders["ownership_target_weight"] if "ownership_target_weight" in placeholders else
-                                    tf.placeholder(tf.float32, [None] + model.ownership_target_weight))
+                                    tf.placeholder(tf.float32, [None] + model.ownership_target_weight_shape))
     self.utilityvar_target_weight = (placeholders["utilityvar_target_weight"] if "utilityvar_target_weight" in placeholders else
-                                   tf.placeholder(tf.float32, [None] + model.utilityvar_target_weight))
+                                   tf.placeholder(tf.float32, [None] + model.utilityvar_target_weight_shape))
     self.selfkomi = (placeholders["selfkomi"] if "selfkomi" in placeholders else
                      tf.placeholder(tf.float32, [None]))
 
@@ -1284,8 +1289,9 @@ class Target_vars:
       )
     )
 
-    self.utilityvar_loss_unreduced = 0.2 * self.utilityvar_target_weight * (
-      tf.reduce_sum(tf.square(self.utilityvar_target - tf.math.softplus(miscvalues_output[:,2:6])),axis=1)
+    self.utilityvar_loss_unreduced = 0.2 * tf.reduce_sum(
+      self.utilityvar_target_weight * tf.square(self.utilityvar_target - tf.math.softplus(miscvalues_output[:,2:6])),
+      axis=1
     )
 
     #This uses a formulation where each batch element cares about its average loss.
@@ -1333,23 +1339,23 @@ class Target_vars:
     self.scale_reg_loss_unreduced = tf.reshape(0.0005 * tf.add_n([tf.square(variable) for variable in model.prescale_variables]), [-1])
     #self.scale_reg_loss_unreduced = tf.zeros_like(self.winloss_reg_loss_unreduced)
 
-    self.policy_loss = tf.reduce_sum(self.target_weight_used * self.policy_loss_unreduced)
-    self.policy1_loss = tf.reduce_sum(self.target_weight_used * self.policy1_loss_unreduced)
-    self.value_loss = tf.reduce_sum(self.target_weight_used * self.value_loss_unreduced)
-    self.scoremean_loss = tf.reduce_sum(self.target_weight_used * self.scoremean_loss_unreduced)
-    self.scorebelief_pdf_loss = tf.reduce_sum(self.target_weight_used * self.scorebelief_pdf_loss_unreduced)
-    self.scorebelief_cdf_loss = tf.reduce_sum(self.target_weight_used * self.scorebelief_cdf_loss_unreduced)
-    self.bonusbelief_pdf_loss = tf.reduce_sum(self.target_weight_used * self.bonusbelief_pdf_loss_unreduced)
-    self.bonusbelief_cdf_loss = tf.reduce_sum(self.target_weight_used * self.bonusbelief_cdf_loss_unreduced)
-    self.utilityvar_loss = tf.reduce_sum(self.target_weight_used * self.utilityvar_loss_unreduced)
-    self.ownership_loss = tf.reduce_sum(self.target_weight_used * self.ownership_loss_unreduced)
-    self.ownership_reg_loss = tf.reduce_sum(self.target_weight_used * self.ownership_reg_loss_unreduced)
-    self.scoremean_reg_loss = tf.reduce_sum(self.target_weight_used * self.scoremean_reg_loss_unreduced)
-    self.scorestdev_reg_loss = tf.reduce_sum(self.target_weight_used * self.scorestdev_reg_loss_unreduced)
-    self.winloss_reg_loss = tf.reduce_sum(self.target_weight_used * self.winloss_reg_loss_unreduced)
-    self.scale_reg_loss = tf.reduce_sum(self.target_weight_used * self.scale_reg_loss_unreduced)
+    self.policy_loss = tf.reduce_sum(self.target_weight_used * self.policy_loss_unreduced, name="losses/policy_loss")
+    self.policy1_loss = tf.reduce_sum(self.target_weight_used * self.policy1_loss_unreduced, name="losses/policy1_loss")
+    self.value_loss = tf.reduce_sum(self.target_weight_used * self.value_loss_unreduced, name="losses/value_loss")
+    self.scoremean_loss = tf.reduce_sum(self.target_weight_used * self.scoremean_loss_unreduced, name="losses/scoremean_loss")
+    self.scorebelief_pdf_loss = tf.reduce_sum(self.target_weight_used * self.scorebelief_pdf_loss_unreduced, name="losses/scorebelief_pdf_loss")
+    self.scorebelief_cdf_loss = tf.reduce_sum(self.target_weight_used * self.scorebelief_cdf_loss_unreduced, name="losses/scorebelief_cdf_loss")
+    self.bonusbelief_pdf_loss = tf.reduce_sum(self.target_weight_used * self.bonusbelief_pdf_loss_unreduced, name="losses/bonusbelief_pdf_loss")
+    self.bonusbelief_cdf_loss = tf.reduce_sum(self.target_weight_used * self.bonusbelief_cdf_loss_unreduced, name="losses/bonusbelief_cdf_loss")
+    self.utilityvar_loss = tf.reduce_sum(self.target_weight_used * self.utilityvar_loss_unreduced, name="losses/utilityvar_loss")
+    self.ownership_loss = tf.reduce_sum(self.target_weight_used * self.ownership_loss_unreduced, name="losses/ownership_loss")
+    self.ownership_reg_loss = tf.reduce_sum(self.target_weight_used * self.ownership_reg_loss_unreduced, name="losses/ownership_reg_loss")
+    self.scoremean_reg_loss = tf.reduce_sum(self.target_weight_used * self.scoremean_reg_loss_unreduced, name="losses/scoremean_reg_loss")
+    self.scorestdev_reg_loss = tf.reduce_sum(self.target_weight_used * self.scorestdev_reg_loss_unreduced, name="losses/scorestdev_reg_loss")
+    self.winloss_reg_loss = tf.reduce_sum(self.target_weight_used * self.winloss_reg_loss_unreduced, name="losses/winloss_reg_loss")
+    self.scale_reg_loss = tf.reduce_sum(self.target_weight_used * self.scale_reg_loss_unreduced, name="losses/scale_reg_loss")
 
-    self.weight_sum = tf.reduce_sum(self.target_weight_used)
+    self.weight_sum = tf.reduce_sum(self.target_weight_used, name="losses/weight_sum")
 
     if for_optimization:
       #Prior/Regularization
@@ -1400,11 +1406,11 @@ class Metrics:
     self.policy_target_entropy_unreduced = target_vars.policy_target_weight * (
       -tf.reduce_sum(target_vars.policy_target * tf.log(target_vars.policy_target+(1e-20)), axis=1)
     )
-    self.accuracy1 = tf.reduce_sum(target_vars.target_weight_used * self.accuracy1_unreduced)
-    self.accuracy4 = tf.reduce_sum(target_vars.target_weight_used * self.accuracy4_unreduced)
-    self.value_entropy = tf.reduce_sum(target_vars.target_weight_used * self.value_entropy_unreduced)
-    self.value_conf = tf.reduce_sum(target_vars.target_weight_used * self.value_conf_unreduced)
-    self.policy_target_entropy = tf.reduce_sum(target_vars.target_weight_used * self.policy_target_entropy_unreduced)
+    self.accuracy1 = tf.reduce_sum(target_vars.target_weight_used * self.accuracy1_unreduced, name="metrics/accuracy1")
+    self.accuracy4 = tf.reduce_sum(target_vars.target_weight_used * self.accuracy4_unreduced, name="metrics/accuracy4")
+    self.value_entropy = tf.reduce_sum(target_vars.target_weight_used * self.value_entropy_unreduced, name="metrics/value_entropy")
+    self.value_conf = tf.reduce_sum(target_vars.target_weight_used * self.value_conf_unreduced, name="metrics/value_conf")
+    self.policy_target_entropy = tf.reduce_sum(target_vars.target_weight_used * self.policy_target_entropy_unreduced, name="metrics/policy_target_entropy")
 
     #Debugging stats
     if include_debug_stats:
@@ -1448,7 +1454,7 @@ class ModelUtils:
     logf("Model: %d total parameters" % total_parameters)
 
   @staticmethod
-  def build_model_from_tfrecords_features(features,mode,print_model,trainlog,model_config,pos_len,num_batches_per_epoch,lr_epoch_offset=None,lr_epoch_scale=None,lr_epoch_cap=None,lr_scale=None):
+  def build_model_from_tfrecords_features(features,mode,print_model,trainlog,model_config,pos_len,num_batches_per_epoch,lr_scale=None):
     trainlog("Building model")
 
     num_bin_input_features = Model.get_num_bin_input_features(model_config)
@@ -1477,7 +1483,7 @@ class ModelUtils:
       model = Model(model_config,pos_len,placeholders)
       return model
 
-    placeholders["include_history"] = features["gtnc"][:,31:36]
+    placeholders["include_history"] = features["gtnc"][:,36:41]
 
     policy_target0 = features["ptncm"][:,0,:]
     policy_target0 = policy_target0 / tf.reduce_sum(policy_target0,axis=1,keepdims=True)
@@ -1486,7 +1492,7 @@ class ModelUtils:
     policy_target1 = features["ptncm"][:,1,:]
     policy_target1 = policy_target1 / tf.reduce_sum(policy_target1,axis=1,keepdims=True)
     placeholders["policy_target1"] = policy_target1
-    placeholders["policy_target_weight1"] = features["gtnc"][:,29]
+    placeholders["policy_target_weight1"] = features["gtnc"][:,28]
 
     placeholders["value_target"] = features["gtnc"][:,0:3]
     placeholders["scoremean_target"] = features["gtnc"][:,3]
@@ -1497,9 +1503,9 @@ class ModelUtils:
 
     placeholders["target_weight_from_data"] = features["gtnc"][:,25]
     placeholders["ownership_target_weight"] = features["gtnc"][:,27]
-    placeholders["utilityvar_target_weight"] = features["gtnc"][:,28]
+    placeholders["utilityvar_target_weight"] = features["gtnc"][:,29:33]
 
-    placeholders["selfkomi"] = features["gtnc"][:,42]
+    placeholders["selfkomi"] = features["gtnc"][:,47]
     placeholders["l2_reg_coeff"] = tf.constant(l2_coeff_value,dtype=tf.float32)
 
     if mode == tf.estimator.ModeKeys.EVAL:
@@ -1520,13 +1526,13 @@ class ModelUtils:
       global_step_float = tf.cast(global_step, tf.float32)
       global_epoch = global_step_float / tf.constant(num_batches_per_epoch,dtype=tf.float32)
 
-      lr_epoch_offset = 0.0 if lr_epoch_offset is None else float(lr_epoch_offset)
-      lr_epoch_scale = 0.1 if lr_epoch_scale is None else float(lr_epoch_scale)
-      lr_epoch_cap = 150.0 if lr_epoch_cap is None else float(lr_epoch_cap)
-      lr_scale = 0.00006 if lr_scale is None else float(lr_scale)
-      global_epoch_float_capped = tf.math.minimum(tf.constant(lr_epoch_cap),global_epoch + tf.constant(lr_epoch_offset,dtype=tf.float32))
+      lr_base = 0.00006 * (1.0 if lr_scale is None else lr_scale)
       per_sample_learning_rate = (
-        tf.constant(lr_scale) / tf.pow(global_epoch_float_capped * tf.constant(lr_epoch_scale) + tf.constant(1.0), tf.constant(1.333333))
+        tf.constant(lr_base) * tf.train.piecewise_constant(
+          global_epoch,
+          boundaries = [5.0],
+          values = [1.0/3.0, 1.0]
+        )
       )
 
       lr_adjusted_variables = model.lr_adjusted_variables
