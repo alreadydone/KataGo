@@ -22,8 +22,9 @@ cpp/evalsgf
 cpp/runmatch.sh
 cpp/runstuff.sh
 cpp/runwrite.sh
-cpp/.vs
-new
+cpp/.vs/*
+g104
+!ladder/*
 
 cpp/program/gitinfo.h
 

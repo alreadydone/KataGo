@@ -7,7 +7,7 @@
       "project": "CMakeLists.txt",
       "projectTarget": "main.exe",
       "args": [
-        " gtp -model 15x192.txt -config configs/gtp_example.cfg"
+        " gtp -model 6x96.txt -config configs/gtp_example.cfg"
       ],
       "name": "main.exe"
     }
